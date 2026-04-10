@@ -1,0 +1,26 @@
+[Unit]
+Description=Project Phalanx - Home Network Guardian
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/phalanx
+ExecStart=/usr/bin/python3 /opt/phalanx/main.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=PHALANX_BASE=/opt/phalanx
+
+# Resource limits for Pi 4
+MemoryMax=512M
+CPUQuota=80%
+
+# Security hardening
+ProtectSystem=strict
+ReadWritePaths=/opt/phalanx/data /opt/phalanx/blocklists /opt/phalanx/logs
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
