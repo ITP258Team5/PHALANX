@@ -22,6 +22,16 @@ DNS_UPSTREAM_TIMEOUT = 3.0  # seconds
 DNS_CACHE_MAX_SIZE = 8192  # entries — ~2MB at ~250 bytes/entry
 DNS_CACHE_TTL = 300  # seconds, for blocked responses
 
+# ── DNS-over-HTTPS (DoH) ──
+# When enabled, upstream queries go via HTTPS instead of plain UDP.
+# This prevents your ISP from seeing what domains the household resolves.
+DOH_ENABLED = os.getenv("PHALANX_DOH", "true").lower() == "true"
+DOH_UPSTREAM = [
+    "https://cloudflare-dns.com/dns-query",
+    "https://dns.google/dns-query",
+]
+DOH_TIMEOUT = 5.0  # seconds (slightly higher than UDP — HTTPS handshake)
+
 # ── Blocklist ──
 BLOCKLIST_SOURCES = [
     # Free defaults that ship with the device (always active)
@@ -30,6 +40,26 @@ BLOCKLIST_SOURCES = [
         "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
         "format": "hosts",
         "subscription_required": False,
+    },
+    {
+        "name": "anudeepND Ads",
+        "url": "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
+        "format": "domains",
+        "subscription_required": False,
+    },
+    # Standard tier (subscription)
+    {
+        "name": "Hagezi Pro",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt",
+        "format": "domains",
+        "subscription_required": True,
+    },
+    # Premium tier (subscription)
+    {
+        "name": "Hagezi Ultimate",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/ultimate.txt",
+        "format": "domains",
+        "subscription_required": True,
     },
     {
         "name": "Phalanx Curated",

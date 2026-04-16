@@ -338,6 +338,43 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
 
 # ══════════════════════════════════════
+# 8. Engine Toggle
+# ══════════════════════════════════════
+print("\n── Engine Toggle ──")
+
+toggle_blocklist = {"ads.example.com", "tracker.test.com"}
+toggle_proto = DNSServerProtocol(toggle_blocklist)
+
+test("Blocking enabled by default", toggle_proto.blocking_enabled is True)
+test("Stats reflect enabled", toggle_proto.stats["blocking_enabled"] is True)
+
+# With blocking on, domain should be blocked
+def check_blocked(proto, domain):
+    parts = domain.split(".")
+    if not proto.blocking_enabled:
+        return False
+    for i in range(len(parts) - 1):
+        candidate = ".".join(parts[i:])
+        if candidate in proto.blocklist:
+            return True
+    return False
+
+test("Blocked domain with engine ON", check_blocked(toggle_proto, "ads.example.com") is True)
+
+# Disable blocking
+toggle_proto.set_blocking(False)
+test("Blocking disabled after toggle", toggle_proto.blocking_enabled is False)
+test("Stats reflect disabled", toggle_proto.stats["blocking_enabled"] is False)
+test("Blocked domain passes with engine OFF", check_blocked(toggle_proto, "ads.example.com") is False)
+test("All domains pass with engine OFF", check_blocked(toggle_proto, "tracker.test.com") is False)
+
+# Re-enable
+toggle_proto.set_blocking(True)
+test("Blocking re-enabled", toggle_proto.blocking_enabled is True)
+test("Blocked domain blocked again after re-enable", check_blocked(toggle_proto, "ads.example.com") is True)
+
+
+# ══════════════════════════════════════
 # Summary
 # ══════════════════════════════════════
 print("\n" + "=" * 50)

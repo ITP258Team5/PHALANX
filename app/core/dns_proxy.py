@@ -133,19 +133,18 @@ class DNSCache:
 
 # ── Upstream Resolver ──
 
-async def forward_upstream(
+async def forward_upstream_udp(
     query: bytes,
     upstreams: list[str] = None,
     timeout: float = config.DNS_UPSTREAM_TIMEOUT,
 ) -> Optional[bytes]:
-    """Forward a DNS query to upstream resolvers via UDP. First success wins."""
+    """Forward a DNS query to upstream resolvers via plain UDP."""
     upstreams = upstreams or config.DNS_UPSTREAM
 
     loop = asyncio.get_running_loop()
 
     for server in upstreams:
         try:
-            # Create a one-shot UDP socket
             transport, protocol = await asyncio.wait_for(
                 loop.create_datagram_endpoint(
                     lambda: _UpstreamProtocol(),
@@ -164,11 +163,70 @@ async def forward_upstream(
                 transport.close()
 
         except (asyncio.TimeoutError, OSError) as e:
-            logger.debug("Upstream %s failed: %s", server, e)
+            logger.debug("UDP upstream %s failed: %s", server, e)
             continue
 
-    logger.warning("All upstream DNS servers failed")
+    logger.warning("All UDP upstream DNS servers failed")
     return None
+
+
+async def forward_upstream_doh(
+    query: bytes,
+    upstreams: list[str] = None,
+    timeout: float = None,
+) -> Optional[bytes]:
+    """
+    Forward a DNS query via DNS-over-HTTPS (RFC 8484).
+    Sends the raw DNS wireformat as application/dns-message POST body.
+    The DoH server returns the raw DNS response bytes.
+    """
+    import aiohttp
+
+    upstreams = upstreams or config.DOH_UPSTREAM
+    timeout = timeout or config.DOH_TIMEOUT
+
+    for server_url in upstreams:
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as session:
+                async with session.post(
+                    server_url,
+                    data=query,
+                    headers={
+                        "Content-Type": "application/dns-message",
+                        "Accept": "application/dns-message",
+                    },
+                ) as resp:
+                    if resp.status == 200:
+                        return await resp.read()
+                    else:
+                        logger.debug("DoH %s returned HTTP %d", server_url, resp.status)
+
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.debug("DoH upstream %s failed: %s", server_url, e)
+            continue
+
+    logger.warning("All DoH upstream servers failed")
+    return None
+
+
+async def forward_upstream(
+    query: bytes,
+    upstreams: list[str] = None,
+    timeout: float = config.DNS_UPSTREAM_TIMEOUT,
+) -> Optional[bytes]:
+    """
+    Forward a DNS query upstream. Uses DoH if enabled, falls back to UDP.
+    """
+    if config.DOH_ENABLED:
+        result = await forward_upstream_doh(query)
+        if result:
+            return result
+        # DoH failed — fall back to plain UDP
+        logger.debug("DoH failed, falling back to UDP")
+
+    return await forward_upstream_udp(query, upstreams, timeout)
 
 
 class _UpstreamProtocol(asyncio.DatagramProtocol):
@@ -199,7 +257,11 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
         self.cache = DNSCache()
         self.transport = None
         self.traffic_callback = traffic_callback
-        self._stats = {"queries": 0, "blocked": 0, "forwarded": 0, "cached": 0}
+        self.blocking_enabled = True  # Engine toggle — can be flipped via API
+        self._stats = {
+            "queries": 0, "blocked": 0, "forwarded": 0, "cached": 0,
+            "doh_enabled": config.DOH_ENABLED, "blocking_enabled": True,
+        }
 
     def connection_made(self, transport):
         self.transport = transport
@@ -216,14 +278,15 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
 
         client_ip = addr[0]
 
-        # Check blocklist (also check parent domains: a.b.example.com → b.example.com → example.com)
+        # Check blocklist (only if blocking engine is enabled)
         blocked = False
-        parts = domain.split(".")
-        for i in range(len(parts) - 1):
-            candidate = ".".join(parts[i:])
-            if candidate in self.blocklist:
-                blocked = True
-                break
+        if self.blocking_enabled:
+            parts = domain.split(".")
+            for i in range(len(parts) - 1):
+                candidate = ".".join(parts[i:])
+                if candidate in self.blocklist:
+                    blocked = True
+                    break
 
         if blocked:
             self._stats["blocked"] += 1
@@ -242,7 +305,7 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
                 self.traffic_callback(client_ip, domain, blocked=False)
             return
 
-        # Forward upstream
+        # Forward upstream (DoH or UDP depending on config)
         self._stats["forwarded"] += 1
         response = await forward_upstream(data)
         if response:
@@ -251,6 +314,12 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
 
         if self.traffic_callback:
             self.traffic_callback(client_ip, domain, blocked=False)
+
+    def set_blocking(self, enabled: bool):
+        """Toggle the blocking engine on or off."""
+        self.blocking_enabled = enabled
+        self._stats["blocking_enabled"] = enabled
+        logger.info("Blocking engine %s", "ENABLED" if enabled else "DISABLED")
 
     @property
     def stats(self) -> dict:

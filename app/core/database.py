@@ -373,7 +373,10 @@ MIGRATIONS = {
     INSERT OR IGNORE INTO blocklist_sources (name, url, format, subscription_required, domain_count)
     VALUES
         ('StevenBlack Unified', 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts', 'hosts', 0, 0),
-        ('Phalanx Curated',     '', 'domains', 1, 0);
+        ('anudeepND Ads', 'https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt', 'domains', 0, 0),
+        ('Hagezi Pro', 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt', 'domains', 1, 0),
+        ('Hagezi Ultimate', 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/ultimate.txt', 'domains', 1, 0),
+        ('Phalanx Curated', '', 'domains', 1, 0);
     """,
 }
 

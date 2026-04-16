@@ -12,7 +12,10 @@ the device with free blocklists only.
 import json
 import logging
 import os
+import re
 import time
+from collections import defaultdict
+from html import escape as html_escape
 from pathlib import Path
 
 from aiohttp import web
@@ -22,6 +25,78 @@ import config
 logger = logging.getLogger("phalanx.api")
 
 GUI_DIR = config.BASE_DIR / "gui" / "dist"
+
+
+# ── Input validation ──
+
+# Matches valid domain names (letters, digits, hyphens, dots)
+_DOMAIN_RE = re.compile(r"^(?!-)[a-zA-Z0-9-]{1,63}(?:\.[a-zA-Z0-9-]{1,63})*\.[a-zA-Z]{2,}$")
+
+# Matches valid IPv4
+_IPV4_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+
+# Max length for freeform text fields
+_MAX_NAME_LEN = 64
+_MAX_EMAIL_LEN = 254
+_MAX_DOMAIN_LEN = 253
+
+
+def sanitize_text(value: str, max_len: int = _MAX_NAME_LEN) -> str:
+    """Strip HTML tags and limit length. For device names, user labels, etc."""
+    if not isinstance(value, str):
+        return ""
+    # Strip any HTML tags
+    clean = re.sub(r"<[^>]*>", "", value)
+    # Escape remaining special chars
+    clean = html_escape(clean, quote=True)
+    return clean[:max_len].strip()
+
+
+def validate_domain(domain: str) -> str | None:
+    """Validate and normalize a domain name. Returns cleaned domain or None."""
+    if not isinstance(domain, str):
+        return None
+    domain = domain.strip().lower().strip(".")
+    if not domain or len(domain) > _MAX_DOMAIN_LEN:
+        return None
+    if not _DOMAIN_RE.match(domain):
+        return None
+    return domain
+
+
+def validate_ip(ip: str) -> str | None:
+    """Validate an IPv4 address. Returns cleaned IP or None."""
+    if not isinstance(ip, str):
+        return None
+    ip = ip.strip()
+    if not _IPV4_RE.match(ip):
+        return None
+    parts = ip.split(".")
+    if any(int(p) > 255 for p in parts):
+        return None
+    return ip
+
+
+class RateLimiter:
+    """Simple per-IP rate limiter for auth endpoints."""
+    def __init__(self, max_attempts: int = 5, window_seconds: int = 300):
+        self._attempts: dict[str, list[float]] = defaultdict(list)
+        self._max = max_attempts
+        self._window = window_seconds
+
+    def check(self, key: str) -> bool:
+        """Returns True if the request is allowed, False if rate-limited."""
+        now = time.time()
+        attempts = self._attempts[key]
+        # Prune old attempts
+        self._attempts[key] = [t for t in attempts if now - t < self._window]
+        if len(self._attempts[key]) >= self._max:
+            return False
+        self._attempts[key].append(now)
+        return True
+
+
+_login_limiter = RateLimiter(max_attempts=5, window_seconds=300)
 
 
 def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Application:
@@ -63,8 +138,14 @@ def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Applicat
     # ── Auth routes ──
 
     async def login(request: web.Request):
+        client_ip = request.remote or "unknown"
+        if not _login_limiter.check(client_ip):
+            return web.json_response(
+                {"error": "Too many login attempts. Try again in a few minutes."},
+                status=429,
+            )
         body = await request.json()
-        email = body.get("email", "")
+        email = sanitize_text(body.get("email", ""), max_len=_MAX_EMAIL_LEN)
         password = body.get("password", "")
         if not email or not password:
             return web.json_response({"error": "Email and password required"}, status=400)
@@ -121,10 +202,12 @@ def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Applicat
 
     async def device_rename(request: web.Request):
         body = await request.json()
-        ip = body.get("ip", "")
-        name = body.get("name", "")
-        if not ip or not name:
-            return web.json_response({"error": "ip and name required"}, status=400)
+        ip = validate_ip(body.get("ip", ""))
+        name = sanitize_text(body.get("name", ""))
+        if not ip:
+            return web.json_response({"error": "Invalid IP address"}, status=400)
+        if not name:
+            return web.json_response({"error": "Name is required (max 64 chars, no HTML)"}, status=400)
         request.app["monitor"].set_device_name(ip, name)
         return web.json_response({"success": True})
 
@@ -132,12 +215,18 @@ def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Applicat
 
     async def alert_list(request: web.Request):
         include_low = request.query.get("include_low", "false") == "true"
-        limit = int(request.query.get("limit", "50"))
+        try:
+            limit = min(int(request.query.get("limit", "50")), 500)
+        except ValueError:
+            limit = 50
         alerts = request.app["monitor"].get_alerts(limit=limit, include_low=include_low)
         return web.json_response({"alerts": alerts})
 
     async def alert_grouped(request: web.Request):
-        limit = int(request.query.get("limit", "20"))
+        try:
+            limit = min(int(request.query.get("limit", "20")), 200)
+        except ValueError:
+            limit = 20
         alerts = request.app["monitor"].get_grouped_alerts(limit=limit)
         return web.json_response({"alerts": alerts})
 
@@ -153,23 +242,25 @@ def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Applicat
 
     async def blocklist_whitelist_add(request: web.Request):
         body = await request.json()
-        domain = body.get("domain", "")
+        domain = validate_domain(body.get("domain", ""))
         if not domain:
-            return web.json_response({"error": "domain required"}, status=400)
+            return web.json_response({"error": "Invalid domain name"}, status=400)
         request.app["blocklist"].add_whitelist(domain)
         return web.json_response({"success": True, "domain": domain, "action": "whitelisted"})
 
     async def blocklist_whitelist_remove(request: web.Request):
         body = await request.json()
-        domain = body.get("domain", "")
+        domain = validate_domain(body.get("domain", ""))
+        if not domain:
+            return web.json_response({"error": "Invalid domain name"}, status=400)
         request.app["blocklist"].remove_whitelist(domain)
         return web.json_response({"success": True, "domain": domain, "action": "removed_from_whitelist"})
 
     async def blocklist_blacklist_add(request: web.Request):
         body = await request.json()
-        domain = body.get("domain", "")
+        domain = validate_domain(body.get("domain", ""))
         if not domain:
-            return web.json_response({"error": "domain required"}, status=400)
+            return web.json_response({"error": "Invalid domain name"}, status=400)
         request.app["blocklist"].add_blacklist(domain)
         return web.json_response({"success": True, "domain": domain, "action": "blacklisted"})
 
@@ -200,6 +291,53 @@ def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Applicat
     def _get_dns_stats(request):
         dns_proto = request.app.get("dns_protocol")
         return dns_proto.stats if dns_proto else {}
+
+    # ── Engine toggle ──
+
+    async def engine_status(request: web.Request):
+        """Get current blocking engine status."""
+        dns_proto = request.app.get("dns_protocol")
+        return web.json_response({
+            "blocking_enabled": dns_proto.blocking_enabled if dns_proto else False,
+            "doh_enabled": config.DOH_ENABLED,
+        })
+
+    async def engine_toggle(request: web.Request):
+        """Enable or disable the blocking engine at runtime."""
+        body = await request.json()
+        enabled = body.get("enabled")
+        if not isinstance(enabled, bool):
+            return web.json_response({"error": "Field 'enabled' must be true or false"}, status=400)
+
+        dns_proto = request.app.get("dns_protocol")
+        if not dns_proto:
+            return web.json_response({"error": "DNS proxy not running"}, status=503)
+
+        dns_proto.set_blocking(enabled)
+        return web.json_response({
+            "success": True,
+            "blocking_enabled": dns_proto.blocking_enabled,
+        })
+
+    # ── Blocklist refresh ──
+
+    async def blocklist_refresh(request: web.Request):
+        """Manually trigger a blocklist update."""
+        bl = request.app["blocklist"]
+        sub = request.app["sub"]
+        is_active = sub.is_subscription_active
+        results = await bl.update(subscription_active=is_active)
+
+        # Hot-swap into DNS proxy
+        dns_proto = request.app.get("dns_protocol")
+        if dns_proto:
+            dns_proto.blocklist = bl.active_set
+
+        return web.json_response({
+            "success": True,
+            "total_domains": bl.domain_count,
+            "sources": results,
+        })
 
     # ── GUI serving ──
     # Serve index.html for all non-API routes (SPA fallback)
@@ -240,6 +378,10 @@ def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Applicat
     app.router.add_post("/api/blocklist/whitelist", blocklist_whitelist_add)
     app.router.add_delete("/api/blocklist/whitelist", blocklist_whitelist_remove)
     app.router.add_post("/api/blocklist/blacklist", blocklist_blacklist_add)
+    app.router.add_post("/api/blocklist/refresh", blocklist_refresh)
+
+    app.router.add_get("/api/engine", engine_status)
+    app.router.add_post("/api/engine/toggle", engine_toggle)
 
     app.router.add_get("/api/diagnostics", diagnostics)
 
