@@ -408,28 +408,45 @@ _FALLBACK_HTML = """<!DOCTYPE html>
   .logo { width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #3b82f6, #06b6d4); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; font-size: 18px; }
   .title { font-size: 17px; font-weight: 700; }
   .subtitle { font-size: 11px; color: #6b7280; }
-  .container { max-width: 800px; margin: 0 auto; padding: 24px; }
-  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  .container { max-width: 1000px; margin: 0 auto; padding: 24px; padding-bottom: 60px; }
+  .nav { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .nav button { background: #181b25; color: #9ca3af; border: 1px solid #2a2d3a; border-radius: 10px; padding: 9px 13px; cursor: pointer; font-weight: 600; }
+  .nav button.active { background: #1d355f; color: #60a5fa; border-color: #3b82f6; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
   .card { background: #181b25; border-radius: 14px; padding: 20px; border: 1px solid #2a2d3a; }
   .card-label { font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.8px; }
-  .card-value { font-size: 28px; font-weight: 700; margin-top: 6px; font-family: 'JetBrains Mono', monospace; }
+  .card-value { font-size: 24px; font-weight: 700; margin-top: 6px; font-family: monospace; }
   .card-sub { font-size: 12px; color: #6b7280; margin-top: 4px; }
-  .section-title { font-size: 14px; font-weight: 600; color: #9ca3af; margin-bottom: 12px; }
-  .device { background: #181b25; border: 1px solid #2a2d3a; border-radius: 12px; padding: 14px 18px; margin-bottom: 8px; display: flex; align-items: center; gap: 14px; }
+  .section { margin-top: 24px; }
+  .section-title { font-size: 14px; font-weight: 700; color: #9ca3af; margin-bottom: 8px; }
+  .section-help { font-size: 13px; color: #6b7280; margin-bottom: 12px; }
+  .device, .alert, .row-box { background: #181b25; border: 1px solid #2a2d3a; border-radius: 12px; padding: 14px 18px; margin-bottom: 8px; }
+  .device { display: flex; align-items: center; gap: 14px; }
   .device-name { font-size: 14px; font-weight: 600; }
   .device-meta { font-size: 11px; color: #6b7280; margin-top: 2px; }
   .dot { width: 10px; height: 10px; border-radius: 50%; margin-left: auto; }
   .dot-green { background: #22c55e; box-shadow: 0 0 8px #22c55e66; }
   .dot-gray { background: #6b7280; }
-  .alert { background: #181b25; border-radius: 12px; padding: 14px 18px; margin-bottom: 8px; border-left: 3px solid; }
-  .alert-high { border-color: #ef4444; }
+  .alert { border-left: 3px solid; }
+  .alert-high, .alert-critical { border-color: #ef4444; }
   .alert-medium { border-color: #f59e0b; }
   .alert-low { border-color: #22c55e; }
-  .alert-sev { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; display: inline-block; margin-bottom: 4px; }
+  .alert-sev { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; display: inline-block; margin-bottom: 4px; background: #111827; }
   .alert-msg { font-size: 13px; color: #9ca3af; }
-  .loading { text-align: center; padding: 40px; color: #6b7280; }
+  .loading { text-align: center; padding: 24px; color: #6b7280; }
   .error { color: #ef4444; text-align: center; padding: 20px; }
+  input { padding: 10px 12px; border-radius: 10px; border: 1px solid #2a2d3a; background: #0f1117; color: #e2e4e9; }
+  button.action { padding: 10px 14px; border-radius: 10px; border: none; cursor: pointer; font-weight: 700; background: #3b82f6; color: white; }
+  button.danger { background: #7f1d1d; color: #fecaca; }
+  table { width: 100%; border-collapse: collapse; background: #181b25; border: 1px solid #2a2d3a; border-radius: 12px; overflow: hidden; }
+  th, td { padding: 12px; border-bottom: 1px solid #2a2d3a; text-align: left; font-size: 13px; }
+  th { color: #9ca3af; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; }
+  .bar-bg { height: 10px; background: #0f1117; border-radius: 8px; overflow: hidden; margin: 6px 0 12px; }
+  .bar-blue { height: 100%; background: #3b82f6; }
+  .bar-green { height: 100%; background: #22c55e; }
   #status-bar { padding: 8px 24px; font-size: 12px; color: #6b7280; background: #161822; border-top: 1px solid #2a2d3a; position: fixed; bottom: 0; width: 100%; }
+  .hidden { display: none; }
+  @media (max-width: 800px) { .cards { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
 <body>
@@ -442,91 +459,147 @@ _FALLBACK_HTML = """<!DOCTYPE html>
 </div>
 
 <div class="container">
-  <div class="cards">
-    <div class="card">
-      <div class="card-label">Devices online</div>
-      <div class="card-value" id="devices-count" style="color: #22c55e;">—</div>
-      <div class="card-sub" id="devices-sub">Loading...</div>
+  <div class="nav">
+    <button onclick="showTab('dashboard')" id="nav-dashboard" class="active">Dashboard</button>
+    <button onclick="showTab('devices')" id="nav-devices">Connected Devices</button>
+    <button onclick="showTab('threats')" id="nav-threats">Threats</button>
+    <button onclick="showTab('bandwidth')" id="nav-bandwidth">Bandwidth</button>
+    <button onclick="showTab('blocklist')" id="nav-blocklist">Blocklist</button>
+  </div>
+
+  <div id="tab-dashboard">
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">Devices online</div>
+        <div class="card-value" id="devices-count" style="color:#22c55e;">—</div>
+        <div class="card-sub" id="devices-sub">Loading...</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Domains blocked</div>
+        <div class="card-value" id="blocked-count" style="color:#3b82f6;">—</div>
+        <div class="card-sub" id="blocked-sub">Loading...</div>
+      </div>
+      <div class="card">
+        <div class="card-label">DNS queries</div>
+        <div class="card-value" id="dns-count" style="color:#a78bfa;">—</div>
+        <div class="card-sub" id="dns-sub">Loading...</div>
+      </div>
+      <div class="card">
+        <div class="card-label">System Health</div>
+        <div class="card-value" id="system-health" style="color:#22c55e;">CPU —</div>
+        <div class="card-sub" id="system-sub">RAM — · Temp —</div>
+      </div>
     </div>
-    <div class="card">
-      <div class="card-label">Domains blocked</div>
-      <div class="card-value" id="blocked-count" style="color: #3b82f6;">—</div>
-      <div class="card-sub" id="blocked-sub">Loading...</div>
+
+    <div class="section">
+      <div class="section-title">Connected Devices</div>
+      <div class="section-help">Shows devices detected on the local network.</div>
+      <div id="device-list"><div class="loading">Loading...</div></div>
     </div>
-    <div class="card">
-      <div class="card-label">DNS queries</div>
-      <div class="card-value" id="dns-count" style="color: #a78bfa;">—</div>
-      <div class="card-sub" id="dns-sub">Loading...</div>
+
+    <div class="section">
+      <div class="section-title">Recent Alerts</div>
+      <div id="alert-list"><div class="loading">Loading...</div></div>
     </div>
   </div>
 
-  <div class="section-title">Connected devices</div>
-  <div id="device-list"><div class="loading">Loading...</div></div>
+  <div id="tab-devices" class="hidden">
+    <div class="section-title">Connected Devices</div>
+    <div class="section-help">Shows devices detected on the local network, including their IP address, status, and last seen time.</div>
+    <div id="device-list-full"><div class="loading">Loading...</div></div>
+  </div>
 
-  <div class="section-title" style="margin-top: 24px;">Recent alerts</div>
-  <div id="alert-list"><div class="loading">Loading...</div></div>
+  <div id="tab-threats" class="hidden">
+    <div class="section-title">Threat Intelligence Map</div>
+    <div class="section-help">Shows where blocked or suspicious domains are coming from when Geo-IP data is available.</div>
+    <div id="threat-map"><div class="loading">No threat location data available yet.</div></div>
+
+    <div class="section">
+      <div class="section-title">Threat Intelligence Table</div>
+      <table>
+        <thead>
+          <tr><th>Domain</th><th>Device</th><th>Country</th><th>Severity</th></tr>
+        </thead>
+        <tbody id="threat-table">
+          <tr><td colspan="4">No threat intelligence records available yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="tab-bandwidth" class="hidden">
+    <div class="section-title">Network Bandwidth Monitoring</div>
+    <div class="section-help">Shows daily upload and download totals from the local network when bandwidth data is available.</div>
+    <div id="bandwidth-list"><div class="loading">No bandwidth data available yet.</div></div>
+  </div>
+
+  <div id="tab-blocklist" class="hidden">
+    <div class="section-title">Website Blocking Controls</div>
+    <div class="section-help">Enter a website like example.com to block or allow it.</div>
+
+    <div class="row-box">
+      <div class="section-title">Block a website</div>
+      <input id="blockInput" placeholder="example.com">
+      <button class="action danger" onclick="blockDomain()">Block Website</button>
+      <div class="section-help" style="margin-top:8px;">Always block this website.</div>
+    </div>
+
+    <div class="row-box">
+      <div class="section-title">Allow a website</div>
+      <input id="allowInput" placeholder="example.com">
+      <button class="action" onclick="allowDomain()">Allow Website</button>
+      <div class="section-help" style="margin-top:8px;">Always allow this website.</div>
+    </div>
+  </div>
 </div>
 
 <div id="status-bar">Connecting to Phalanx...</div>
 
 <script>
+let lastData = null;
+
+function showTab(name) {
+  ['dashboard','devices','threats','bandwidth','blocklist'].forEach(t => {
+    document.getElementById('tab-' + t).classList.toggle('hidden', t !== name);
+    document.getElementById('nav-' + t).classList.toggle('active', t === name);
+  });
+}
+
 async function refresh() {
   try {
     const res = await fetch('/api/dashboard');
     if (!res.ok) throw new Error('API ' + res.status);
     const d = await res.json();
+    lastData = d;
 
-    // Cards
-    document.getElementById('devices-count').textContent =
-      d.devices.online + ' / ' + d.devices.total;
-    document.getElementById('devices-sub').textContent =
-      d.devices.online === d.devices.total ? 'All systems normal' : 'Some devices offline';
+    document.getElementById('devices-count').textContent = d.devices.online + ' / ' + d.devices.total;
+    document.getElementById('devices-sub').textContent = d.devices.online === d.devices.total ? 'All devices are connected' : 'Some devices may be offline';
 
-    document.getElementById('blocked-count').textContent =
-      d.blocklist.total_domains.toLocaleString();
+    document.getElementById('blocked-count').textContent = d.blocklist.total_domains.toLocaleString();
     document.getElementById('blocked-sub').textContent = 'In active blocklist';
 
     const dns = d.dns || {};
-    document.getElementById('dns-count').textContent =
-      (dns.queries || 0).toLocaleString();
-    document.getElementById('dns-sub').textContent =
-      (dns.blocked || 0) + ' blocked, ' + (dns.cached || 0) + ' cached';
+    document.getElementById('dns-count').textContent = (dns.queries || 0).toLocaleString();
+    document.getElementById('dns-sub').textContent = (dns.blocked || 0) + ' blocked, ' + (dns.cached || 0) + ' cached';
 
-    // Devices
-    const dl = document.getElementById('device-list');
-    if (d.devices.list && d.devices.list.length > 0) {
-      dl.innerHTML = d.devices.list.map(dev => {
-        const online = (Date.now()/1000 - dev.last_seen) < 300;
-        return '<div class="device">' +
-          '<div><div class="device-name">' + esc(dev.name) + '</div>' +
-          '<div class="device-meta">' + esc(dev.ip) + ' · ' + esc(dev.device_type) + '</div></div>' +
-          '<div class="dot ' + (online ? 'dot-green' : 'dot-gray') + '"></div></div>';
-      }).join('');
-    } else {
-      dl.innerHTML = '<div class="loading">No devices seen yet. Point your router DNS to this Pi.</div>';
-    }
+    const system = d.system || d.health || (d.diagnostics && d.diagnostics.system) || {};
+    const cpu = system.cpu_percent ?? system.cpu ?? '—';
+    const ram = system.ram_percent ?? system.memory_percent ?? '—';
+    const temp = system.temperature_c ?? system.temp_c ?? system.temperature ?? '—';
+    document.getElementById('system-health').textContent = 'CPU ' + cpu + (cpu === '—' ? '' : '%');
+    document.getElementById('system-sub').textContent = 'RAM ' + ram + (ram === '—' ? '' : '%') + ' · Temp ' + temp + (temp === '—' ? '' : '°C');
 
-    // Alerts
-    const al = document.getElementById('alert-list');
-    const alerts = d.alerts.recent || [];
-    if (alerts.length > 0) {
-      al.innerHTML = alerts.map(a =>
-        '<div class="alert alert-' + a.severity + '">' +
-        '<span class="alert-sev">' + a.severity.toUpperCase() + '</span> ' +
-        '<strong>' + esc(a.device_name || a.device_ip) + '</strong>' +
-        '<div class="alert-msg">' + esc(a.message) + '</div></div>'
-      ).join('');
-    } else {
-      al.innerHTML = '<div class="loading">No alerts. Your network looks clean.</div>';
-    }
+    renderDevices(d);
+    renderAlerts(d);
+    renderThreats(d);
+    renderBandwidth(d);
 
-    // Subscription status
     const sub = d.subscription || {};
     let statusText = 'Phalanx running';
     if (sub.status === 'active') statusText += ' · Subscription active';
     else if (sub.status === 'grace') statusText += ' · Subscription expiring in ' + sub.days_until_freeze + ' days';
-    else if (sub.status === 'lapsed') statusText += ' · Blocklists frozen (subscription expired)';
-    else statusText += ' · Free mode (no subscription)';
+    else if (sub.status === 'lapsed') statusText += ' · Blocklists frozen';
+    else statusText += ' · Free mode';
     statusText += ' · ' + d.blocklist.total_domains.toLocaleString() + ' domains blocked';
     document.getElementById('status-bar').textContent = statusText;
 
@@ -535,9 +608,109 @@ async function refresh() {
   }
 }
 
+function renderDevices(d) {
+  const html = d.devices.list && d.devices.list.length > 0
+    ? d.devices.list.map(dev => {
+        const online = (Date.now()/1000 - dev.last_seen) < 300;
+        return '<div class="device">' +
+          '<div><div class="device-name">' + esc(dev.name) + '</div>' +
+          '<div class="device-meta">' + esc(dev.ip) + ' · ' + esc(dev.device_type) + '</div></div>' +
+          '<div class="dot ' + (online ? 'dot-green' : 'dot-gray') + '"></div></div>';
+      }).join('')
+    : '<div class="loading">No devices detected yet.</div>';
+  document.getElementById('device-list').innerHTML = html;
+  document.getElementById('device-list-full').innerHTML = html;
+}
+
+function renderAlerts(d) {
+  const alerts = (d.alerts && d.alerts.recent) || [];
+  const al = document.getElementById('alert-list');
+  if (alerts.length > 0) {
+    al.innerHTML = alerts.map(a =>
+      '<div class="alert alert-' + esc(a.severity) + '">' +
+      '<span class="alert-sev">' + esc((a.severity || 'low').toUpperCase()) + '</span> ' +
+      '<strong>' + esc(a.device_name || a.device_ip || 'Unknown device') + '</strong>' +
+      '<div class="alert-msg">' + esc(a.message || '') + '</div></div>'
+    ).join('');
+  } else {
+    al.innerHTML = '<div class="loading">No alerts. Your network looks clean.</div>';
+  }
+}
+
+function renderThreats(d) {
+  const alerts = (d.alerts && d.alerts.recent) || [];
+  const rows = ((d.threat_intelligence && d.threat_intelligence.items) || (d.threats && d.threats.items) || alerts).map((item, i) => ({
+    domain: item.domain || item.hostname || item.message || 'Unknown domain',
+    device: item.device_name || item.device_ip || 'Unknown device',
+    country: item.country || item.country_name || item.geo_country || 'Unknown',
+    severity: item.severity || 'medium'
+  }));
+
+  const countries = {};
+  rows.forEach(r => countries[r.country] = (countries[r.country] || 0) + 1);
+
+  document.getElementById('threat-map').innerHTML = Object.keys(countries).length
+    ? Object.entries(countries).map(([country, count]) =>
+        '<div class="row-box"><strong>' + esc(country) + '</strong><div class="section-help">' + count + ' blocked request(s)</div></div>'
+      ).join('')
+    : '<div class="loading">No threat location data available yet.</div>';
+
+  document.getElementById('threat-table').innerHTML = rows.length
+    ? rows.map(r => '<tr><td>' + esc(r.domain) + '</td><td>' + esc(r.device) + '</td><td>' + esc(r.country) + '</td><td>' + esc(r.severity) + '</td></tr>').join('')
+    : '<tr><td colspan="4">No threat intelligence records available yet.</td></tr>';
+}
+
+function renderBandwidth(d) {
+  const rows = ((d.bandwidth && d.bandwidth.daily) || (d.network && d.network.bandwidth_daily) || (d.bandwidth && d.bandwidth.items) || []).map((item, i) => ({
+    day: item.day || item.date || 'Day ' + (i + 1),
+    upload: item.upload_mb ?? item.upload ?? 0,
+    download: item.download_mb ?? item.download ?? 0
+  }));
+
+  const max = Math.max(1, ...rows.map(r => Math.max(r.upload, r.download)));
+
+  document.getElementById('bandwidth-list').innerHTML = rows.length
+    ? rows.map(r => {
+        const downWidth = Math.round((r.download / max) * 100);
+        const upWidth = Math.round((r.upload / max) * 100);
+        return '<div class="row-box"><strong>' + esc(r.day) + '</strong>' +
+          '<div class="section-help">Download: ' + esc(r.download) + ' MB</div>' +
+          '<div class="bar-bg"><div class="bar-blue" style="width:' + downWidth + '%"></div></div>' +
+          '<div class="section-help">Upload: ' + esc(r.upload) + ' MB</div>' +
+          '<div class="bar-bg"><div class="bar-green" style="width:' + upWidth + '%"></div></div></div>';
+      }).join('')
+    : '<div class="loading">No bandwidth data available yet.</div>';
+}
+
+async function blockDomain() {
+  const domain = document.getElementById('blockInput').value.trim();
+  if (!domain) return alert('Enter a website like example.com');
+  await fetch('/api/blocklist/blacklist', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({domain})
+  });
+  document.getElementById('blockInput').value = '';
+  alert('Website blocked: ' + domain);
+  refresh();
+}
+
+async function allowDomain() {
+  const domain = document.getElementById('allowInput').value.trim();
+  if (!domain) return alert('Enter a website like example.com');
+  await fetch('/api/blocklist/whitelist', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({domain})
+  });
+  document.getElementById('allowInput').value = '';
+  alert('Website allowed: ' + domain);
+  refresh();
+}
+
 function esc(s) {
   const d = document.createElement('div');
-  d.textContent = s || '';
+  d.textContent = s == null ? '' : String(s);
   return d.innerHTML;
 }
 
