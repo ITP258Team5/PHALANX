@@ -337,6 +337,41 @@ const removeSource = async (sourceName) => {
   const dnsStats = dash.dns || {};
   const recentAlerts = dash.alerts?.recent || [];
   const sub = dash.subscription || {};
+  const systemHealth = dash.system || dash.health || dash.diagnostics?.system || {};
+  const cpuPercent = systemHealth.cpu_percent ?? systemHealth.cpu ?? "—";
+  const ramPercent = systemHealth.ram_percent ?? systemHealth.memory_percent ?? "—";
+  const tempC = systemHealth.temperature_c ?? systemHealth.temp_c ?? systemHealth.temperature ?? "—";
+  const bandwidthRows = (
+  dash.bandwidth?.daily ||
+  dash.network?.bandwidth_daily ||
+  dash.bandwidth?.items ||
+  []
+).map((item, i) => ({
+  day: item.day || item.date || `Day ${i + 1}`,
+  upload: item.upload_mb ?? item.upload ?? 0,
+  download: item.download_mb ?? item.download ?? 0,
+}));
+
+const maxBandwidth = Math.max(
+  1,
+  ...bandwidthRows.map((row) => Math.max(row.upload, row.download))
+);
+  const threatIntelRows = (
+  dash.threat_intelligence?.items ||
+  dash.threats?.items ||
+  recentAlerts
+).map((item, i) => ({
+  domain: item.domain || item.hostname || item.message || "Unknown domain",
+  device: item.device_name || item.device_ip || "Unknown device",
+  country: item.country || item.country_name || item.geo_country || "Unknown",
+  severity: item.severity || "medium",
+  time: item.timestamp || item.last_seen || Math.floor(Date.now() / 1000) - i * 300,
+}));
+
+const threatCountries = threatIntelRows.reduce((acc, row) => {
+  acc[row.country] = (acc[row.country] || 0) + 1;
+  return acc;
+}, {});
 
   const getDeviceStatus = (d) => {
     if (d.is_blocked) return "alert";
@@ -372,13 +407,13 @@ const removeSource = async (sourceName) => {
         </div>
 
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          {["dashboard", "devices", "alerts", "logs", "blocklist"].map((t) => (
+          {["dashboard", "devices", "threats", "bandwidth", "alerts", "logs", "blocklist"].map((t) => (
             <button key={t} tabIndex={0} onClick={() => { setTab(t); setSelectedDevice(null); }} style={{
               padding: "7px 14px", borderRadius: 8, border: "none", cursor: "pointer",
               fontSize: 13, fontWeight: 600, fontFamily: FONT,
               background: tab === t ? C.accentSoft : "transparent",
               color: tab === t ? C.accent : C.textMuted,
-            }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
+            }}>{t === "devices" ? "Connected Devices" : t.charAt(0).toUpperCase() + t.slice(1)}</button>
           ))}
           {sub.authenticated && (
             <button tabIndex={0} onClick={logout} style={{
@@ -422,13 +457,22 @@ const removeSource = async (sourceName) => {
     System is {error ? "Offline" : "Active"}
   </div>
 </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
               <Card label="Devices online" value={`${onlineCount} / ${totalDevices}`} color={C.green}
                 sub={onlineCount === totalDevices ? "All connected" : `${totalDevices - onlineCount} offline`} />
+ 
               <Card label="Domains blocked" value={blockedDomains.toLocaleString()} color={C.accent}
                 sub="In active blocklist" />
+
               <Card label="DNS queries" value={(dnsStats.queries || 0).toLocaleString()} color={C.purple}
                 sub={`${dnsStats.blocked || 0} blocked · ${dnsStats.cached || 0} cached`} />
+
+              <Card
+                label="System Health"
+                value={`CPU ${cpuPercent}${cpuPercent === "—" ? "" : "%"}`}
+                color={C.green}
+                sub={`RAM ${ramPercent}${ramPercent === "—" ? "" : "%"} · Temp ${tempC}${tempC === "—" ? "" : "°C"}`}
+              />
             </div> 
 
             {recentAlerts.filter((a) => a.severity !== "low").length > 0 && (
@@ -516,7 +560,10 @@ const removeSource = async (sourceName) => {
 
         {/* ══ DEVICES TAB ══ */}
         {tab === "devices" && !selectedDevice && (
-          <Section title={`All devices (${totalDevices})`}>
+          <Section title={`Connected Devices (${totalDevices})`}>
+            <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 12 }}>
+            Shows devices detected on the local network, including their IP address, status, and last seen time.
+            </div>
             {devices.map((d) => (
               <DeviceRow key={d.ip} device={d} status={getDeviceStatus(d)}
                 onClick={() => setSelectedDevice(d)} />
@@ -528,7 +575,108 @@ const removeSource = async (sourceName) => {
             )}
           </Section>
         )}
+        {/* ══ THREAT INTELLIGENCE TAB ══ */}
+{tab === "threats" && (
+  <>
+    <Section title="Threat Intelligence Map">
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ fontSize: 13, marginBottom: 10 }}>
+          Shows where blocked domains are coming from.
+        </div>
 
+        {Object.entries(threatCountries).map(([country, count]) => (
+          <div key={country}>
+            {country}: {count}
+          </div>
+        ))}
+      </div>
+    </Section>
+
+    <Section title="Threat Intelligence Table">
+      <table>
+        <thead>
+          <tr>
+            <th>Domain</th>
+            <th>Device</th>
+            <th>Country</th>
+            <th>Severity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {threatIntelRows.map((row, i) => (
+            <tr key={i}>
+              <td>{row.domain}</td>
+              <td>{row.device}</td>
+              <td>{row.country}</td>
+              <td>{row.severity}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Section>
+  </>
+)}
+{/* ══ BANDWIDTH TAB ══ */}
+{tab === "bandwidth" && (
+  <Section title="Network Bandwidth Monitoring">
+    <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 14 }}>
+      Shows daily upload and download totals from the local network when bandwidth data is available.
+    </div>
+
+    {bandwidthRows.length === 0 && (
+      <div style={{ color: C.textMuted, fontSize: 13, padding: 20, textAlign: "center" }}>
+        No bandwidth data available yet.
+      </div>
+    )}
+
+    {bandwidthRows.map((row, i) => (
+      <div key={i} style={{
+        background: C.card,
+        border: `1px solid ${C.border}`,
+        borderRadius: 12,
+        padding: "14px 16px",
+        marginBottom: 10
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
+          {row.day}
+        </div>
+
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 5 }}>
+          Download: {row.download} MB
+        </div>
+        <div style={{
+          height: 10,
+          background: C.bg,
+          borderRadius: 8,
+          overflow: "hidden",
+          marginBottom: 10
+        }}>
+          <div style={{
+            width: `${Math.round((row.download / maxBandwidth) * 100)}%`,
+            height: "100%",
+            background: C.accent
+          }} />
+        </div>
+
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 5 }}>
+          Upload: {row.upload} MB
+        </div>
+        <div style={{
+          height: 10,
+          background: C.bg,
+          borderRadius: 8,
+          overflow: "hidden"
+        }}>
+          <div style={{
+            width: `${Math.round((row.upload / maxBandwidth) * 100)}%`,
+            height: "100%",
+            background: C.green
+          }} />
+        </div>
+      </div>
+    ))}
+  </Section>
+)}
         {/* ══ ALERTS TAB ══ */}
         {tab === "alerts" && (
           <>
@@ -670,12 +818,12 @@ const removeSource = async (sourceName) => {
               )}
             </Section>
 
-            {/* Whitelist / Blacklist controls */}
-            <Section title="Manual overrides">
+            {/* Website blocking controls */}
+            <Section title="Website blocking controls">
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                    Whitelist a domain
+                    Allow a website
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <input value={wlDomain} onChange={(e) => setWlDomain(e.target.value)}
@@ -684,12 +832,12 @@ const removeSource = async (sourceName) => {
                     <button tabIndex={0} onClick={addWhitelist} style={smallBtn}>Allow</button>
                   </div>
                   <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>
-                    Stop blocking this domain
+                    Always allow this website
                   </div>
                 </div>
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                    Blacklist a domain
+                    Block a website
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <input value={blDomain} onChange={(e) => setBlDomain(e.target.value)}
@@ -698,7 +846,7 @@ const removeSource = async (sourceName) => {
                     <button tabIndex={0} onClick={addBlacklist} style={{ ...smallBtn, background: C.redSoft, color: C.red }}>Block</button>
                   </div>
                   <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>
-                    Force-block this domain
+                    Always block this website
                   </div>
                 </div>
               </div>
