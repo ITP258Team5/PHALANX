@@ -4,7 +4,10 @@ const API = "";
 
 async function api(path, opts = {}) {
   const res = await fetch(`${API}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Phalanx-Request": "1",
+    },
     ...opts,
   });
   if (res.status === 401) throw new Error("AUTH");
@@ -54,129 +57,88 @@ function timeAgo(ts) {
 }
 
 /* ─── Login ─── */
-function LoginScreen({ onLogin, error }) {
+function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const submit = () => {
-    if (!email.trim() || !pass.trim()) return;
-    onLogin(email, pass);
-  };
-
-  const inputStyle = {
-    width: "100%",
-    padding: "12px 14px",
-    borderRadius: 10,
-    border: `1px solid ${C.border}`,
-    background: C.bg,
-    color: C.text,
-    fontSize: 14,
-    fontFamily: FONT,
-    outline: "none",
-    boxSizing: "border-box",
+  const submit = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password: pass }),
+      });
+      if (res.success) onLogin();
+      else setError(res.message || "Login failed");
+    } catch {
+      setError("Cannot reach Phalanx. Is the device running?");
+    }
+    setLoading(false);
   };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: C.bg,
-        padding: 24,
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 380,
-          background: C.card,
-          border: `1px solid ${C.border}`,
-          borderRadius: 16,
-          padding: 24,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
-        }}
-      >
-        <div style={{ fontSize: 24, fontWeight: 800, color: C.text, marginBottom: 6 }}>
-          Phalanx Login
-        </div>
-        <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 18 }}>
-          Sign in to view system data
-        </div>
-
-        <div style={{ marginBottom: 8, fontSize: 12, color: C.textMuted }}>Email</div>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email"
-          style={inputStyle}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-
-        <div style={{ marginTop: 14, marginBottom: 8, fontSize: 12, color: C.textMuted }}>
-          Password
-        </div>
-        <input
-          type="password"
-          value={pass}
-          onChange={(e) => setPass(e.target.value)}
-          placeholder="Password"
-          style={inputStyle}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-
-        {error && (
-          <div
-            style={{
-              marginTop: 14,
-              padding: "10px 12px",
-              borderRadius: 10,
-              background: C.redSoft,
-              color: C.red,
-              fontSize: 13,
-            }}
-          >
-            {error}
+    <div style={{
+      minHeight: "100vh", background: C.bg, display: "flex",
+      alignItems: "center", justifyContent: "center", fontFamily: FONT,
+    }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+      <div style={{
+        background: C.surface, borderRadius: 20, padding: "48px 40px",
+        border: `1px solid ${C.border}`, width: 380,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 32 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 12,
+            background: `linear-gradient(135deg, ${C.accent}, ${C.green})`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 22, fontWeight: 700, color: "#fff",
+          }}>P</div>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>Phalanx</div>
+            <div style={{ fontSize: 12, color: C.textMuted }}>Home Network Guardian</div>
           </div>
-        )}
+        </div>
 
-        <button
-  tabIndex={0}
-  onClick={submit}
-          style={{
-            marginTop: 16,
-            width: "100%",
-            padding: "12px 14px",
-            borderRadius: 10,
-            border: "none",
-            background: C.accent,
-            color: "#fff",
-            fontSize: 14,
-            fontWeight: 700,
-            fontFamily: FONT,
-            cursor: "pointer",
-          }}
-        >
-          Sign In
+        <input
+          value={email} onChange={(e) => setEmail(e.target.value)}
+          placeholder="Email" type="email"
+          style={inputStyle} onKeyDown={(e) => e.key === "Enter" && submit()}
+        />
+        <input
+          value={pass} onChange={(e) => setPass(e.target.value)}
+          placeholder="Password" type="password"
+          style={{ ...inputStyle, marginTop: 10 }}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+        />
+
+        {error && <div style={{ color: C.red, fontSize: 13, marginTop: 12 }}>{error}</div>}
+
+        <button onClick={submit} disabled={loading} style={{
+          width: "100%", padding: "12px 0", marginTop: 20, border: "none",
+          borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer",
+          background: `linear-gradient(135deg, ${C.accent}, #2a6fdb)`,
+          color: "#fff", fontFamily: FONT, opacity: loading ? 0.6 : 1,
+        }}>
+          {loading ? "Connecting..." : "Sign In"}
         </button>
+
+        <div style={{ fontSize: 12, color: C.textFaint, marginTop: 16, textAlign: "center" }}>
+          No account? Device works in free mode.
+        </div>
       </div>
     </div>
   );
 }
+
 const inputStyle = {
-  width: "100%",
-  padding: "11px 14px",
-  background: C.bg,
-  border: `1px solid ${C.border}`,
-  borderRadius: 10,
-  color: C.text,
-  fontSize: 14,
-  fontFamily: FONT,
-  outline: "none",
-  boxSizing: "border-box",
+  width: "100%", padding: "11px 14px", background: C.bg,
+  border: `1px solid ${C.border}`, borderRadius: 10, color: C.text,
+  fontSize: 14, fontFamily: FONT, outline: "none", boxSizing: "border-box",
 };
+
 /* ─── Main App ─── */
 export default function PhalanxApp() {
   const [authed, setAuthed] = useState(null);
@@ -193,7 +155,7 @@ export default function PhalanxApp() {
   const [renaming, setRenaming] = useState(null);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState("");
-  const [logs, setLogs] = useState([]);
+
   const refresh = useCallback(async () => {
     try {
       const d = await api("/api/dashboard");
@@ -222,13 +184,7 @@ export default function PhalanxApp() {
       api("/api/alerts?limit=50&include_low=true").then((d) => setAlerts(d.alerts || [])).catch(() => {});
     }
   }, [tab, dash]);
-useEffect(() => {
-  if (tab === "logs") {
-    api("/api/alerts?limit=50&include_low=true")
-      .then((d) => setLogs(d.alerts || []))
-      .catch(() => setLogs([]));
-  }
-}, [tab]);
+
   const loadDiag = async () => {
     setShowDiag(!showDiag);
     if (!showDiag) {
@@ -243,56 +199,20 @@ useEffect(() => {
   useEffect(() => { loadBlocklist(); }, []);
 
   const addWhitelist = async () => {
-  if (!wlDomain.trim()) {
-    setError("Please enter a domain");
-    return;
-  }
-  try {
-    await api("/api/blocklist/whitelist", {
-      method: "POST",
-      body: JSON.stringify({ domain: wlDomain.trim() }),
-    });
+    if (!wlDomain.trim()) return;
+    await api("/api/blocklist/whitelist", { method: "POST", body: JSON.stringify({ domain: wlDomain.trim() }) });
     setWlDomain("");
-    setError("");
     loadBlocklist();
     refresh();
-  } catch {
-    setError("Failed to add domain to allowlist");
-  }
-};
+  };
 
-const addBlacklist = async () => {
-  if (!blDomain.trim()) {
-    setError("Please enter a domain");
-    return;
-  }
-  try {
-    await api("/api/blocklist/blacklist", {
-      method: "POST",
-      body: JSON.stringify({ domain: blDomain.trim() }),
-    });
+  const addBlacklist = async () => {
+    if (!blDomain.trim()) return;
+    await api("/api/blocklist/blacklist", { method: "POST", body: JSON.stringify({ domain: blDomain.trim() }) });
     setBlDomain("");
-    setError("");
     loadBlocklist();
     refresh();
-  } catch {
-    setError("Failed to add domain to blocklist");
-  }
-};
-
-const removeSource = async (sourceName) => {
-  try {
-    await api(`/api/blocklist/source/remove`, {
-      method: "POST",
-      body: JSON.stringify({ source: sourceName }),
-    });
-    setError("");
-    loadBlocklist();
-    refresh();
-  } catch {
-    setError("Failed to remove source");
-  }
-};
+  };
 
   const renameDevice = async (ip) => {
     if (!newName.trim()) return;
@@ -308,26 +228,7 @@ const removeSource = async (sourceName) => {
   };
 
   if (authed === null) return <div style={{ minHeight: "100vh", background: C.bg }} />;
-  if (authed === false) {
-  return (
-    <LoginScreen
-      error={error}
-      onLogin={async (email, pass) => {
-        try {
-          await api("/api/auth/login", {
-            method: "POST",
-            body: JSON.stringify({ email, password: pass }),
-          });
-          setError("");
-          setAuthed(true);
-          refresh();
-        } catch (e) {
-          setError("Invalid email or password");
-        }
-      }}
-    />
-  );
-}
+  if (authed === false) return <LoginScreen onLogin={() => { setAuthed(true); refresh(); }} />;
   if (!dash) return <div style={{ minHeight: "100vh", background: C.bg }} />;
 
   const devices = dash.devices?.list || [];
@@ -372,8 +273,8 @@ const removeSource = async (sourceName) => {
         </div>
 
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          {["dashboard", "devices", "alerts", "logs", "blocklist"].map((t) => (
-            <button key={t} tabIndex={0} onClick={() => { setTab(t); setSelectedDevice(null); }} style={{
+          {["dashboard", "devices", "alerts", "blocklist"].map((t) => (
+            <button key={t} onClick={() => { setTab(t); setSelectedDevice(null); }} style={{
               padding: "7px 14px", borderRadius: 8, border: "none", cursor: "pointer",
               fontSize: 13, fontWeight: 600, fontFamily: FONT,
               background: tab === t ? C.accentSoft : "transparent",
@@ -381,7 +282,7 @@ const removeSource = async (sourceName) => {
             }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
           ))}
           {sub.authenticated && (
-            <button tabIndex={0} onClick={logout} style={{
+            <button onClick={logout} style={{
               marginLeft: 8, padding: "7px 12px", borderRadius: 8,
               border: `1px solid ${C.border}`, background: "transparent",
               color: C.textMuted, fontSize: 12, fontFamily: FONT, cursor: "pointer",
@@ -396,32 +297,7 @@ const removeSource = async (sourceName) => {
 
         {/* ══ DASHBOARD ══ */}
         {tab === "dashboard" && !selectedDevice && (
-          <><div style={{
-  background: C.card,
-  borderRadius: 14,
-  padding: "12px 16px",
-  border: `1px solid ${C.border}`,
-  marginBottom: 20,
-  display: "flex",
-  alignItems: "center",
-  gap: 10
-}}>
-  <div style={{
-    width: 10,
-    height: 10,
-    borderRadius: "50%",
-    background: error ? C.red : C.green,
-    boxShadow: `0 0 6px ${error ? C.red : C.green}66`
-  }} />
-
-  <div style={{
-    fontSize: 13,
-    fontWeight: 600,
-    color: C.text
-  }}>
-    System is {error ? "Offline" : "Active"}
-  </div>
-</div>
+          <>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 24 }}>
               <Card label="Devices online" value={`${onlineCount} / ${totalDevices}`} color={C.green}
                 sub={onlineCount === totalDevices ? "All connected" : `${totalDevices - onlineCount} offline`} />
@@ -429,7 +305,7 @@ const removeSource = async (sourceName) => {
                 sub="In active blocklist" />
               <Card label="DNS queries" value={(dnsStats.queries || 0).toLocaleString()} color={C.purple}
                 sub={`${dnsStats.blocked || 0} blocked · ${dnsStats.cached || 0} cached`} />
-            </div> 
+            </div>
 
             {recentAlerts.filter((a) => a.severity !== "low").length > 0 && (
               <Section title="Alerts">
@@ -468,7 +344,7 @@ const removeSource = async (sourceName) => {
         {/* ══ DEVICE DETAIL ══ */}
         {selectedDevice && (
           <>
-            <button tabIndex={0} onClick={() => setSelectedDevice(null)} style={{
+            <button onClick={() => setSelectedDevice(null)} style={{
               background: "none", border: "none", color: C.accent, cursor: "pointer",
               fontSize: 13, fontWeight: 600, marginBottom: 16, padding: 0, fontFamily: FONT,
             }}>&larr; Back</button>
@@ -486,15 +362,15 @@ const removeSource = async (sourceName) => {
                         placeholder="New name" style={{ ...inputStyle, width: 180, padding: "6px 10px" }}
                         onKeyDown={(e) => e.key === "Enter" && renameDevice(selectedDevice.ip)}
                         autoFocus />
-                      <button tabIndex={0} onClick={() => renameDevice(selectedDevice.ip)}
+                      <button onClick={() => renameDevice(selectedDevice.ip)}
                         style={smallBtn}>Save</button>
-                      <button tabIndex={0} onClick={() => setRenaming(null)}
+                      <button onClick={() => setRenaming(null)}
                         style={{ ...smallBtn, background: "transparent", color: C.textMuted }}>Cancel</button>
                     </div>
                   ) : (
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <div style={{ fontSize: 20, fontWeight: 700 }}>{selectedDevice.name}</div>
-                      <button tabIndex={0} onClick={() => { setRenaming(selectedDevice.ip); setNewName(selectedDevice.name); }}
+                      <button onClick={() => { setRenaming(selectedDevice.ip); setNewName(selectedDevice.name); }}
                         style={{ ...smallBtn, fontSize: 11, padding: "3px 8px" }}>Rename</button>
                     </div>
                   )}
@@ -543,7 +419,7 @@ const removeSource = async (sourceName) => {
 
             {/* Advanced Diagnostics */}
             <div style={{ marginTop: 24, borderTop: `1px solid ${C.border}`, paddingTop: 20 }}>
-              <button tabIndex={0} onClick={loadDiag} style={{
+              <button onClick={loadDiag} style={{
                 background: "none", border: `1px solid ${C.border}`, borderRadius: 10,
                 padding: "10px 18px", cursor: "pointer", fontFamily: FONT,
                 fontSize: 13, fontWeight: 600, color: C.textMuted, width: "100%",
@@ -576,58 +452,7 @@ const removeSource = async (sourceName) => {
             </div>
           </>
         )}
-{/* ══ LOGS TAB ══ */}
-{tab === "logs" && (
-  <Section title="Real-time query log">
-    <div style={{
-  fontSize: 11,
-  color: C.textMuted,
-  marginBottom: 10
-}}>
-  Showing latest network requests
-</div>
-    {logs.length === 0 && (
-      <div style={{
-        color: C.textMuted,
-        fontSize: 13,
-        padding: 20,
-        textAlign: "center"
-      }}>
-        No recent DNS activity detected.
-      </div>
-    )}
 
-    {logs.map((log, i) => (
-      <div key={i} style={{
-        background: C.card,
-        border: `1px solid ${C.border}`,
-        borderRadius: 12,
-        padding: "12px 16px",
-        marginBottom: 8
-      }}>
-        <div style={{ fontSize: 13, fontWeight: 600, fontFamily: MONO }}>
-          {log.device_name || log.device_ip || "Unknown device"}
-        </div>
-
-        <div style={{
-          fontSize: 12,
-          color: C.textMuted,
-          marginTop: 4
-        }}>
-          {log.message || "Network request detected"}
-        </div>
-
-        <div style={{
-          fontSize: 11,
-          color: C.textFaint,
-          marginTop: 4
-        }}>
-          {timeAgo(log.timestamp)}
-        </div>
-      </div>
-    ))}
-  </Section>
-)}
         {/* ══ BLOCKLIST TAB ══ */}
         {tab === "blocklist" && (
           <>
@@ -638,27 +463,19 @@ const removeSource = async (sourceName) => {
               </div>
 
               {blocklist?.sources && Object.entries(blocklist.sources).map(([name, info]) => (
-  <div key={name} style={{
-    background: C.card, borderRadius: 12, padding: "14px 18px",
-    border: `1px solid ${C.border}`, marginBottom: 8,
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-  }}>
-    <div>
-      <div style={{ fontSize: 14, fontWeight: 600 }}>{name}</div>
-      <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
-        {(info.count || 0).toLocaleString()} domains · Updated {timeAgo(info.updated_at)}
-      </div>
-    </div>
-
-    <button
-      tabIndex={0}
-      onClick={() => removeSource(name)}
-      style={{ ...smallBtn, background: C.redSoft, color: C.red }}
-    >
-      Remove
-    </button>
-  </div>
-))}
+                <div key={name} style={{
+                  background: C.card, borderRadius: 12, padding: "14px 18px",
+                  border: `1px solid ${C.border}`, marginBottom: 8,
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{name}</div>
+                    <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
+                      {(info.count || 0).toLocaleString()} domains · Updated {timeAgo(info.updated_at)}
+                    </div>
+                  </div>
+                </div>
+              ))}
 
               {blocklist?.staleness_warning && (
                 <div style={{
@@ -681,7 +498,7 @@ const removeSource = async (sourceName) => {
                     <input value={wlDomain} onChange={(e) => setWlDomain(e.target.value)}
                       placeholder="e.g. example.com" style={{ ...inputStyle, flex: 1, padding: "8px 12px" }}
                       onKeyDown={(e) => e.key === "Enter" && addWhitelist()} />
-                    <button tabIndex={0} onClick={addWhitelist} style={smallBtn}>Allow</button>
+                    <button onClick={addWhitelist} style={smallBtn}>Allow</button>
                   </div>
                   <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>
                     Stop blocking this domain
@@ -695,7 +512,7 @@ const removeSource = async (sourceName) => {
                     <input value={blDomain} onChange={(e) => setBlDomain(e.target.value)}
                       placeholder="e.g. sketchy-site.com" style={{ ...inputStyle, flex: 1, padding: "8px 12px" }}
                       onKeyDown={(e) => e.key === "Enter" && addBlacklist()} />
-                    <button tabIndex={0} onClick={addBlacklist} style={{ ...smallBtn, background: C.redSoft, color: C.red }}>Block</button>
+                    <button onClick={addBlacklist} style={{ ...smallBtn, background: C.redSoft, color: C.red }}>Block</button>
                   </div>
                   <div style={{ fontSize: 11, color: C.textFaint, marginTop: 6 }}>
                     Force-block this domain

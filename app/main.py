@@ -24,6 +24,7 @@ import config
 from core.database import migrate, close as close_db
 from core.blocklist import BlocklistManager
 from core.dns_proxy import start_dns_server
+from core.honeypot import start_honeypot
 from core.monitor import TrafficMonitor
 from core.subscription import SubscriptionManager
 from api.server import create_app
@@ -105,13 +106,21 @@ class PhalanxDaemon:
             logger.error("DNS server failed to start: %s", e)
             return
 
-        # 4. Start background loops
+        # 4. Start honeypot listeners
+        self._honeypot_listeners = []
+        try:
+            self._honeypot_listeners = await start_honeypot()
+            logger.info("Honeypot: %d services active", len(self._honeypot_listeners))
+        except Exception as e:
+            logger.error("Honeypot startup failed (non-fatal): %s", e)
+
+        # 5. Start background loops
         asyncio.create_task(self._monitor_loop())
         asyncio.create_task(self._subscription_loop())
         asyncio.create_task(self._blocklist_update_loop())
         asyncio.create_task(self._baseline_loop())
 
-        # 5. Start API server
+        # 6. Start API server
         app = create_app(self.subscription, self.blocklist, self.monitor)
         app["dns_protocol"] = self._dns_protocol
         runner = web.AppRunner(app)
@@ -129,6 +138,8 @@ class PhalanxDaemon:
         # Cleanup
         if self._dns_transport:
             self._dns_transport.close()
+        for server, _ in self._honeypot_listeners:
+            server.close()
         await runner.cleanup()
         close_db()
 

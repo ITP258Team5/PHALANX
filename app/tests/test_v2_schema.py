@@ -80,7 +80,7 @@ test("trg_dns_hourly_rollup trigger exists", "trg_dns_hourly_rollup" in triggers
 test("trg_anomaly_to_alert trigger exists", "trg_anomaly_to_alert" in triggers)
 
 version = conn.execute("SELECT value FROM schema_meta WHERE key='version'").fetchone()
-test("Schema version is 2", version and version[0] == "2", f"got: {version}")
+test("Schema version is 3", version and version[0] == "3", f"got: {version}")
 
 
 # ══════════════════════════════════════

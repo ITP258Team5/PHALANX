@@ -1,0 +1,19 @@
+[Unit]
+Description=Phalanx Watchdog — DNS Health Monitor & Failsafe
+After=phalanx.service
+Requires=phalanx.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/phalanx/scripts/watchdog.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+# Lightweight — watchdog should barely use any resources
+MemoryMax=64M
+CPUQuota=5%
+
+[Install]
+WantedBy=multi-user.target

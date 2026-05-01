@@ -52,12 +52,12 @@ rollback() {
 trap rollback ERR
 
 # ── 1. System dependencies ──
-echo "[1/7] Installing system dependencies..."
+echo "[1/9] Installing system dependencies..."
 apt-get update -qq
 apt-get install -y -qq python3 python3-pip python3-venv dnsutils curl
 
 # ── 2. Create install directory ──
-echo "[2/7] Setting up ${INSTALL_DIR}..."
+echo "[2/9] Setting up ${INSTALL_DIR}..."
 mkdir -p "${INSTALL_DIR}"/{data,blocklists,logs,gui/dist}
 
 # Copy application files
@@ -66,20 +66,21 @@ cp "${APP_DIR}/requirements.txt" "${INSTALL_DIR}/"
 cp -r "${APP_DIR}/config" "${INSTALL_DIR}/"
 cp -r "${APP_DIR}/core" "${INSTALL_DIR}/"
 cp -r "${APP_DIR}/api" "${INSTALL_DIR}/"
+cp -r "${APP_DIR}/scripts" "${INSTALL_DIR}/"
 
 # ── 3. Python dependencies ──
-echo "[3/7] Installing Python packages..."
+echo "[3/9] Installing Python packages..."
 cd "${INSTALL_DIR}"
 python3 -m pip install --break-system-packages -r requirements.txt
 
 # ── 4. Install systemd service ──
-echo "[4/7] Installing systemd service..."
+echo "[4/9] Installing systemd service..."
 cp "${APP_DIR}/scripts/phalanx.service" /etc/systemd/system/${SERVICE_NAME}.service
 systemctl daemon-reload
 systemctl enable ${SERVICE_NAME}
 
 # ── 5. Start service (DNS is still original — blocklist download works) ──
-echo "[5/7] Starting Phalanx..."
+echo "[5/9] Starting Phalanx..."
 systemctl start ${SERVICE_NAME}
 
 # Wait for the service to come up and verify it's healthy
@@ -138,7 +139,7 @@ if [[ "$BLOCKLIST_COUNT" -lt 100 ]]; then
 fi
 
 # ── 6. NOW switch DNS (service is confirmed running) ──
-echo "[6/7] Switching DNS to Phalanx..."
+echo "[6/9] Switching DNS to Phalanx..."
 
 # Disable systemd-resolved if present
 if systemctl is-active --quiet systemd-resolved; then
@@ -171,16 +172,50 @@ else
     echo ""
 fi
 
-# ── 7. Verify firewall ──
-echo "[7/7] Verifying firewall..."
+# ── 7. Install watchdog ──
+echo "[7/9] Installing health watchdog..."
+cp "${APP_DIR}/scripts/watchdog.py" "${INSTALL_DIR}/scripts/"
+cp "${APP_DIR}/scripts/phalanx-watchdog.service" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable phalanx-watchdog
+systemctl start phalanx-watchdog
+echo "       Watchdog active (auto-restart + failsafe)"
+
+# ── 8. Verify firewall ──
+echo "[8/9] Verifying firewall..."
 if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
     ufw status | grep -q "80" || {
         SUBNET=$(echo "$STATIC_IP" | cut -d. -f1-3).0/24
         ufw allow from "$SUBNET" to any port 80
     }
+    # Ensure DHCP ports are open (67/68 UDP)
+    ufw status | grep -q "67" || {
+        SUBNET=$(echo "$STATIC_IP" | cut -d. -f1-3).0/24
+        ufw allow from "$SUBNET" to any port 67 proto udp
+        ufw allow from "$SUBNET" to any port 68 proto udp
+    }
     echo "       Firewall OK"
 else
     echo "       UFW not active (base layer may not have run)"
+fi
+
+# ── 9. DHCP auto-configuration ──
+echo "[9/9] Setting up automatic DNS assignment..."
+if [[ -f "${APP_DIR}/scripts/setup_dhcp.sh" ]]; then
+    chmod +x "${APP_DIR}/scripts/setup_dhcp.sh"
+    cp "${APP_DIR}/scripts/setup_dhcp.sh" "${INSTALL_DIR}/scripts/"
+    echo ""
+    echo "  To enable plug-and-play mode (all devices auto-use Phalanx):"
+    echo "    sudo bash /opt/phalanx/scripts/setup_dhcp.sh"
+    echo ""
+    echo "  This makes Phalanx the DHCP server for your network."
+    echo "  You will need to disable your router's DHCP after running it."
+    echo ""
+    read -p "  Run DHCP setup now? (y/n): " SETUP_DHCP
+    if [[ "$SETUP_DHCP" == "y" ]]; then
+        bash "${INSTALL_DIR}/scripts/setup_dhcp.sh"
+        DHCP_ACTIVE=true
+    fi
 fi
 
 echo ""
@@ -189,10 +224,19 @@ echo "  ✅ Phalanx Installed and Running!"
 echo ""
 echo "  Dashboard:   http://${STATIC_IP}"
 echo "  Blocklist:   ${BLOCKLIST_COUNT} domains blocked"
+echo "  Watchdog:    active (auto-restart + failsafe)"
+if [[ "${DHCP_ACTIVE:-false}" == "true" ]]; then
+echo "  DHCP:        active (devices auto-assigned)"
+echo ""
+echo "  Disable your router's DHCP server now."
+echo "  All devices will automatically use Phalanx."
+else
+echo "  DHCP:        not configured (manual DNS or run setup_dhcp.sh)"
+echo ""
+echo "  NEXT STEP: Point your router's DNS to ${STATIC_IP}"
+echo "  OR run: sudo bash /opt/phalanx/scripts/setup_dhcp.sh"
+fi
+echo ""
 echo "  Logs:        journalctl -u ${SERVICE_NAME} -f"
-echo ""
-echo "  NEXT STEP: Point your router's DNS"
-echo "  server setting to ${STATIC_IP}"
-echo ""
-echo "  TO UNDO:   sudo bash $(realpath "$0" 2>/dev/null || echo "$0") --uninstall"
+echo "  Watchdog:    journalctl -u phalanx-watchdog -f"
 echo "========================================"

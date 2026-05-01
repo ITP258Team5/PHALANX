@@ -1,258 +1,296 @@
 # Project Phalanx
 
-**Home Network Guardian** — A Raspberry Pi 4 appliance that blocks ads and trackers, monitors network traffic, and alerts non-technical users to suspicious activity via a simple web dashboard.
+A Raspberry Pi 4 appliance that blocks ads, trackers, and malicious domains at the network level. Non-technical users manage everything through a web dashboard — no command line needed after setup.
 
 ## How it works
 
-Phalanx runs as a DNS proxy. Every device you point at it sends DNS queries through the Pi. Queries for known ad/tracker/malware domains get blocked (NXDOMAIN). Everything else forwards to Cloudflare/Google DNS. The dashboard shows what's connected, what's being blocked, and flags anomalies.
+Phalanx runs as a DNS proxy on your local network. Every device that routes DNS through the Pi has its queries checked against a blocklist of 130,000+ known ad, tracker, and malware domains. Blocked queries get an NXDOMAIN response (as if the domain doesn't exist). Legitimate queries are forwarded upstream via plain DNS or DNS-over-HTTPS.
 
-## Project structure
+The dashboard at `http://<pi-ip>` shows real-time stats, live blocked/allowed query feeds, connected devices, and advanced reporting with threat intelligence, network discovery, and system health.
 
-```
-phalanx/
-├── run.sh                   # Full setup (base + app, interactive)
-├── config.env.example       # Network config template
-├── .gitignore
-│
-├── base/                    # Layer 1: OS hardening
-│   └── install.sh           #   Admin user, firewall, SSH, static IP
-│
-└── app/                     # Layer 2: Phalanx application
-    ├── main.py              #   Entry point / orchestrator
-    ├── requirements.txt     #   Python deps (aiohttp, psutil)
-    ├── config/
-    │   └── defaults.py      #   All tunables
-    ├── core/
-    │   ├── database.py      #   SQLite schema, versioned migrations
-    │   ├── dns_proxy.py     #   Async UDP DNS proxy + LRU cache
-    │   ├── blocklist.py     #   List download/parse, subscription gating
-    │   ├── monitor.py       #   Per-device traffic + anomaly detection
-    │   ├── subscription.py  #   Auth + subscription lifecycle
-    │   └── access_control.py#   Role-based DB access (reader/writer/admin)
-    ├── api/
-    │   └── server.py        #   REST API + embedded fallback dashboard
-    ├── gui/
-    │   └── phalanx-gui.jsx  #   React dashboard (design prototype)
-    ├── scripts/
-    │   ├── install.sh       #   App installer (safe DNS switchover)
-    │   └── phalanx.service  #   systemd unit
-    └── tests/
-        ├── test_dns_proxy.py    # 61 tests: DNS parsing, blocking, cache
-        └── test_v2_schema.py    # 37 tests: triggers, views, access control
-```
+## Features
 
----
+- **Ad and tracker blocking** — 130,000+ domains blocked out of the box via StevenBlack and anudeepND blocklists. Subscription tier adds Hagezi Pro and Ultimate for broader coverage.
+- **Real-time dashboard** — Live feeds of blocked and allowed queries, device list, block/allow controls, engine pause/resume toggle.
+- **Advanced reporting** — Top blocked domains, per-device breakdown, query type distribution, hourly activity charts, full query log with latency and matched rules.
+- **Honeypot** — Fake SSH, Telnet, HTTP, and FTP services that trap attackers. Captures credentials, payloads, and port scans. Sessions are classified by severity and logged with full event timelines. High-severity intrusions auto-create alerts.
+- **Threat intelligence** — GeoIP lookup on blocked domains showing country of origin, city, ISP, and block counts with flag emoji summaries.
+- **Network device discovery** — nmap ping sweep or ARP table scan showing every device on the network with IP, MAC, vendor, and hostname.
+- **System health** — CPU, memory, disk, and Pi temperature with progress bars. Live uptime and process memory.
+- **Subscription system** — Cloud backend on Render handles registration, auth, and tier management. Free tier works forever; premium unlocks additional blocklists. Lapsed subscriptions freeze the last cached list — the device never bricks.
+- **DHCP auto-configuration** — Optional dnsmasq setup makes the Pi the DHCP server. All devices automatically use Phalanx for DNS with zero per-device configuration. Fallback DNS (1.1.1.1) included in every lease.
+- **Health watchdog** — Separate service monitors DNS health every 10 seconds. Auto-restarts Phalanx on failure. If unrecoverable, switches DHCP to advertise fallback DNS. Auto-restores when Phalanx recovers.
+- **VPN support** — Tailscale integration for remote DNS protection and dashboard access from anywhere.
+- **Security** — CSRF protection, rate limiting, input sanitization, role-based DB access, SSH hardening, firewall, dotfile blocking, generic auth errors.
 
-## Flash-to-test workflow
+## What you need
 
-### What you need
-
-- Raspberry Pi 4 (4GB)
+- Raspberry Pi 4 (4GB RAM)
 - MicroSD card (16GB+)
-- A separate PC/Mac for testing (on the same network)
+- Power supply and ethernet cable (or Wi-Fi)
+- A separate computer on the same network for testing
 
-### Step 1 — Flash Pi OS
+## Setup
 
-Download [Raspberry Pi OS Lite](https://www.raspberrypi.com/software/) (64-bit). Flash it to the SD card with Raspberry Pi Imager. In the imager settings, enable SSH and set a password so you can connect headless.
+### 1. Flash the Pi
 
-Boot the Pi, find its IP (check your router's DHCP leases or run `ping raspberrypi.local`).
+Download [Raspberry Pi OS Lite](https://www.raspberrypi.com/software/) (64-bit). Flash it with Raspberry Pi Imager. In the imager settings, enable SSH, set a username and password, and configure Wi-Fi if not using ethernet.
 
-### Step 2 — Copy project to the Pi
+Boot the Pi and find its IP (check your router's DHCP leases or try `ping raspberrypi.local`).
 
-From your PC:
+### 2. Copy the project to the Pi
 
 ```bash
-scp -r phalanx/ pi@<PI_IP>:~/
-ssh pi@<PI_IP>
+scp -r phalanx/ <user>@<PI_IP>:~/
+ssh <user>@<PI_IP>
 ```
 
-### Step 3 — Base system setup (optional but recommended)
+### 3. Base system hardening (optional)
 
 ```bash
 cd ~/phalanx
 sudo bash base/install.sh
 ```
 
-This creates a secure admin user, configures a static IP, sets up the firewall, and locks down SSH. Follow the prompts. Note the static IP it assigns — you'll use this for everything below.
+Creates a secure admin user, sets a static IP, configures the firewall, and locks SSH to key-only. Follow the prompts. Write down the static IP.
 
-If you want to skip this for quick testing, that's fine. Just use the Pi's current DHCP IP instead.
-
-### Step 4 — Install Phalanx
+### 4. Install Phalanx
 
 ```bash
 sudo bash app/scripts/install.sh
 ```
 
-This installs dependencies, deploys the app, starts the service, waits for the API to respond, downloads the blocklist (~200k domains), and only then switches the Pi's own DNS to localhost. If anything fails, it rolls back automatically.
+The installer runs 9 steps:
+1. Installs system dependencies (Python, dnsutils, curl, nmap)
+2. Deploys application to `/opt/phalanx`
+3. Installs Python packages (aiohttp, psutil)
+4. Configures systemd service
+5. Starts Phalanx, verifies API is responding, downloads blocklists
+6. Switches Pi's DNS to route through itself (only after service confirmed running)
+7. Installs health watchdog
+8. Verifies firewall
+9. Optionally configures DHCP for plug-and-play mode
 
-You should see:
+If anything fails, it rolls back automatically. Your Pi stays unchanged.
 
+### 5. Set up the honeypot (recommended)
+
+```bash
+sudo bash /opt/phalanx/scripts/setup_honeypot_ports.sh
 ```
-  ✅ Phalanx Installed and Running!
 
-  Dashboard:   http://<PI_IP>
-  Blocklist:   XXXXX domains blocked
+This moves real SSH from port 22 → port 2222, freeing port 22 for the honeypot. The script is safe — it listens on both ports simultaneously, verifies 2222 works, and only then removes port 22.
+
+**After running this, always connect with:**
+```bash
+ssh <user>@<PI_IP> -p 2222
 ```
 
-### Step 5 — Verify from your test PC
+Then restart Phalanx so the honeypot claims port 22:
+```bash
+sudo systemctl restart phalanx
+```
 
-**Do NOT change your router's DNS.** Instead, point only your test PC at the Pi so the rest of your network is unaffected.
+### 6. Point your test PC at the Pi
+
+Change only your test PC's DNS to the Pi's IP:
 
 **Mac:**
 ```bash
-# Set DNS to the Pi
 sudo networksetup -setdnsservers Wi-Fi <PI_IP>
-
-# When done testing, reset to automatic
-sudo networksetup -setdnsservers Wi-Fi empty
+# Reset: sudo networksetup -setdnsservers Wi-Fi empty
 ```
 
 **Windows (PowerShell as admin):**
 ```powershell
-# Set DNS to the Pi
 Set-DnsClientServerAddress -InterfaceAlias "Wi-Fi" -ServerAddresses <PI_IP>
-
-# When done testing, reset to automatic
-Set-DnsClientServerAddress -InterfaceAlias "Wi-Fi" -ResetServerAddresses
+# Reset: Set-DnsClientServerAddress -InterfaceAlias "Wi-Fi" -ResetServerAddresses
 ```
 
 **Linux:**
 ```bash
-# Temporary (resets on reboot)
 sudo resolvectl dns wlan0 <PI_IP>
-
-# Reset
-sudo resolvectl revert wlan0
+# Reset: sudo resolvectl revert wlan0
 ```
 
-### Step 6 — Test blocking
-
-From your test PC (with DNS pointed at the Pi):
+### 7. Verify blocking
 
 ```bash
-# This should RESOLVE (legitimate site)
+# Should RESOLVE (legitimate)
 nslookup google.com
-# Expected: returns an IP like 142.250.x.x
 
-# This should be BLOCKED (ad domain)
+# Should be BLOCKED (ad domain)
 nslookup ads.doubleclick.net
-# Expected: NXDOMAIN or SERVFAIL (no IP returned)
-
-# This should be BLOCKED (tracker)
-nslookup tracking.example.com
 # Expected: NXDOMAIN
 
-# This should RESOLVE (not on blocklist)
+# Should RESOLVE
 nslookup github.com
-# Expected: returns an IP
 ```
 
-### Step 7 — Check the dashboard
+### 8. Open the dashboard
 
-Open `http://<PI_IP>` in your browser. You should see:
+Go to `http://<PI_IP>` in your browser. The dashboard shows:
 
-- Device count showing your test PC
-- Blocked domain count increasing as you browse
-- DNS query stats updating in real time
-- Your test PC listed under "Connected devices"
+- **Summary cards** — devices online, blocklist size, total queries, total blocked
+- **Block/Allow controls** — type a domain, click Block or Allow, takes effect instantly
+- **Engine toggle** — pause/resume blocking from the header
+- **Live blocked queries** — real-time feed with domain, client IP, and timestamp
+- **Live allowed queries** — same for legitimate traffic
+- **Connected devices** — every device routing DNS through Phalanx
 
-### Step 8 — Switch back when done
+Click **Advanced Reporting** to expand:
 
-Reset your test PC's DNS to automatic (commands above). The Pi keeps running — you can come back to it anytime by re-pointing DNS.
+- **Block rate, avg latency, unique domains, active clients**
+- **Top blocked domains** with proportional bar charts
+- **Query type distribution** (A, AAAA, HTTPS, MX, etc.)
+- **Per-device breakdown** — queries, blocks, and block rate per device
+- **Hourly activity chart** — 24-hour view of traffic and blocking
+- **Full query log** — filterable by All/Blocked/Allowed, shows domain, type, status, client, latency, and matched rule
+- **Threat intelligence** — GeoIP origin of blocked domains with country flags, city, ISP
+- **Network device discovery** — nmap scan showing all devices on the network
+- **System health** — CPU, memory, disk, temperature with progress bars
+- **Honeypot** — sessions, captured credentials, event log, per-service breakdown
 
----
+### 9. Test the honeypot
 
-## API endpoints
+If you ran the port swap in step 5, the honeypot is listening on port 22. From your test PC:
+
+```bash
+# This connects to the FAKE SSH (honeypot on port 22)
+ssh root@<PI_IP>
+# Type any password — it will say "Permission denied" and log everything
+```
+
+Open the dashboard → Advanced Reporting → scroll to the Honeypot panel. You'll see the session, the credentials you typed, and the event timeline in real time.
+
+Your real SSH is on port 2222:
+```bash
+# This connects to the REAL SSH
+ssh <user>@<PI_IP> -p 2222
+```
+
+## Optional setup
+
+### Plug-and-play mode (DHCP)
+
+```bash
+sudo bash /opt/phalanx/scripts/setup_dhcp.sh
+```
+
+Makes the Pi the network's DHCP server. All devices automatically use Phalanx for DNS. Requires disabling your router's DHCP server.
+
+### VPN remote access (Tailscale)
+
+```bash
+sudo bash /opt/phalanx/scripts/setup_vpn.sh
+```
+
+Adds Tailscale VPN. Devices on your Tailscale network get ad blocking even on public Wi-Fi or mobile data. Also enables remote dashboard access and SSH from anywhere.
+
+### Subscription (premium blocklists)
+
+The subscription backend runs at `https://phalanx-cloud.onrender.com` (private repo). To activate premium lists:
+
+1. Register a user (requires invite code)
+2. Set their tier to `standard` or `premium` in the admin panel
+3. On the Pi, login and refresh:
+```bash
+curl -X POST http://127.0.0.1/api/auth/login -H "Content-Type: application/json" -H "X-Phalanx-Request: 1" -d "{\"email\":\"user@example.com\",\"password\":\"password\"}"
+curl -X POST http://127.0.0.1/api/blocklist/refresh -H "Content-Type: application/json" -H "X-Phalanx-Request: 1"
+```
+
+## API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/auth/login` | Sign in (email + password) |
+| `GET` | `/api/dashboard` | Summary (devices, blocklist, queries, alerts) |
+| `GET` | `/api/live` | Real-time blocked/allowed query feeds |
+| `GET` | `/api/report` | Advanced reporting (top domains, per-client, hourly, full log) |
+| `GET` | `/api/geoip` | Threat intelligence (GeoIP on blocked domains) |
+| `GET` | `/api/network/scan` | Network device discovery (nmap/ARP) |
+| `GET` | `/api/diagnostics` | System health (CPU, memory, disk, temperature) |
+| `GET` | `/api/honeypot` | Honeypot stats (sessions, credentials, events) |
+| `GET` | `/api/honeypot/session/{id}` | Events for a specific honeypot session |
+| `GET` | `/api/devices` | Connected device list |
+| `POST` | `/api/devices/rename` | Rename a device |
+| `GET` | `/api/alerts` | Security alerts |
+| `GET` | `/api/blocklist` | Blocklist stats |
+| `POST` | `/api/blocklist/blacklist` | Block a domain |
+| `POST` | `/api/blocklist/whitelist` | Allow a domain |
+| `DELETE` | `/api/blocklist/whitelist` | Remove from whitelist |
+| `POST` | `/api/blocklist/refresh` | Trigger blocklist update |
+| `GET` | `/api/engine` | Blocking engine status |
+| `POST` | `/api/engine/toggle` | Pause/resume blocking |
+| `POST` | `/api/auth/login` | Sign in |
 | `POST` | `/api/auth/logout` | Sign out |
 | `GET` | `/api/auth/status` | Auth + subscription status |
-| `GET` | `/api/dashboard` | Full dashboard summary |
-| `GET` | `/api/devices` | All seen devices |
-| `POST` | `/api/devices/rename` | Rename a device `{ip, name}` |
-| `GET` | `/api/alerts` | Recent alerts (`?include_low=true&limit=50`) |
-| `GET` | `/api/alerts/grouped` | Alerts collapsed by group |
-| `GET` | `/api/blocklist` | Blocklist stats + staleness |
-| `POST` | `/api/blocklist/whitelist` | Allow a domain `{domain}` |
-| `DELETE` | `/api/blocklist/whitelist` | Remove from whitelist `{domain}` |
-| `POST` | `/api/blocklist/blacklist` | Force-block a domain `{domain}` |
-| `GET` | `/api/diagnostics` | System memory, CPU, DNS proxy stats |
 
-## Test suites
+All POST requests require the header `X-Phalanx-Request: 1` (CSRF protection).
+
+## Tests
 
 ```bash
 cd ~/phalanx/app
-
-# DNS proxy logic (parsing, blocking, cache, matching)
-python3 tests/test_dns_proxy.py      # 61 tests
-
-# Schema, triggers, views, access control
-python3 tests/test_v2_schema.py      # 37 tests
+python3 tests/test_dns_proxy.py     # 70 tests
+python3 tests/test_v2_schema.py     # 37 tests
 ```
 
----
+## Project structure
 
-## What's done
-
-- [x] DNS proxy engine (async UDP, LRU cache, parent-domain matching)
-- [x] Blocklist manager (hosts + domain-list parsing, subscription gating, freeze-on-lapse)
-- [x] Traffic monitor (batched stats, behavioral baselines, anomaly detection, alert suppression)
-- [x] Subscription manager (ACTIVE → GRACE → LAPSED lifecycle)
-- [x] SQLite schema v2 with versioned migrations
-- [x] DB triggers (auto last_seen, alert-on-block, hourly rollup, anomaly-to-alert)
-- [x] Read-only views + role-based access control (reader/writer/admin)
-- [x] Sign-on audit log
-- [x] REST API with all endpoints
-- [x] Embedded HTML dashboard (live, auto-refresh)
-- [x] React GUI prototype (login, dashboard, devices, alerts, blocklist management)
-- [x] Base OS hardening (admin user, firewall, SSH lockdown, static IP)
-- [x] Safe installer with DNS rollback on failure
-- [x] systemd service with memory cap + security hardening
-- [x] 98 passing tests
-
-## What's remaining
-
-- [ ] Build React GUI into `gui/dist/` (needs bundler pipeline; fallback HTML works now)
-- [ ] Subscription cloud API backend (auth endpoint is a placeholder URL)
-- [ ] Device auto-discovery (mDNS, DHCP lease parsing, MAC vendor lookup)
-- [ ] Persist whitelist/blacklist to `user_overrides` table (currently in-memory)
-- [ ] Sync blocklist sources to `blocklist_entries` table for "why was this blocked?"
-- [ ] Device blocking from dashboard (drop DNS for blocked devices)
-- [ ] HTTPS for dashboard (self-signed cert on first boot)
-- [ ] First-boot setup wizard
-- [ ] OTA update mechanism
+```
+phalanx/
+├── run.sh                        # Full setup (base + app)
+├── config.env.example            # Network config template
+├── base/
+│   └── install.sh                # OS hardening
+└── app/
+    ├── main.py                   # Entry point
+    ├── requirements.txt          # Python deps
+    ├── config/
+    │   └── defaults.py           # All tunables
+    ├── core/
+    │   ├── database.py           # SQLite schema + migrations (v2)
+    │   ├── dns_proxy.py          # DNS proxy + DoH + cache + engine toggle
+    │   ├── blocklist.py          # Blocklist management + subscription gating
+    │   ├── monitor.py            # Traffic monitoring + anomaly detection
+    │   ├── subscription.py       # Auth + subscription lifecycle
+    │   ├── access_control.py     # Role-based DB access
+    │   ├── honeypot.py           # Fake service listeners (SSH, HTTP, Telnet, FTP)
+    │   └── net_tools.py          # GeoIP, nmap scanning, network tools
+    ├── api/
+    │   └── server.py             # REST API + dashboard
+    ├── gui/
+    │   └── phalanx-gui.jsx       # React GUI prototype
+    ├── scripts/
+    │   ├── install.sh            # App installer (9-step, safe rollback)
+    │   ├── phalanx.service       # systemd unit
+    │   ├── phalanx-watchdog.service # Watchdog systemd unit
+    │   ├── watchdog.py           # DNS health monitor + failsafe
+    │   ├── setup_dhcp.sh         # DHCP auto-configuration
+    │   ├── setup_vpn.sh          # Tailscale VPN setup
+    │   ├── setup_honeypot_ports.sh # SSH port swap (22→2222 for honeypot)
+    │   ├── cleanup_logs.py       # Daily log/DB rotation (cron)
+    │   ├── parse_dns_logs.py     # DNS log backfill parser
+    │   └── update_blocklist.sh   # Weekly blocklist refresh (cron)
+    └── tests/
+        ├── test_dns_proxy.py     # 70 tests
+        └── test_v2_schema.py     # 37 tests
+```
 
 ## Troubleshooting
 
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| `nslookup` still resolves blocked domains | Test PC DNS not pointed at Pi | Re-run the DNS setup command for your OS |
-| Dashboard won't load | Service not running | `sudo systemctl status phalanx` then check logs |
-| Blocklist has 0 domains | Initial download failed | `sudo systemctl restart phalanx` (needs internet) |
-| Port 53 permission denied | Not running as root | Service runs as root via systemd; manual runs need `sudo` |
-| Pi lost internet after install | Phalanx crashed after DNS switch | `sudo cp /etc/resolv.conf.bak.phalanx /etc/resolv.conf` |
-| SSH locked out after base install | SSH key paste went wrong | Mount SD card on another machine, fix `/etc/ssh/sshd_config` |
-
-## Git
-
-```bash
-cd phalanx
-git init
-git add .
-git commit -m "Phalanx v0.5 — DNS proxy, traffic monitor, dashboard, access control
-
-- Async UDP DNS proxy with LRU cache and parent-domain matching
-- Blocklist engine with subscription gating and freeze-on-lapse
-- Per-device traffic monitoring with behavioral anomaly detection
-- SQLite v2 schema: triggers, hourly rollups, role-based access control
-- REST API with embedded dashboard + React GUI prototype
-- OS hardening layer (firewall, SSH, static IP)
-- Safe installer with automatic DNS rollback
-- 98 passing tests"
-
-git remote add origin https://github.com/<your-org>/phalanx.git
-git branch -M main
-git push -u origin main
-```
+| Problem | Fix |
+|---------|-----|
+| `nslookup` still resolves blocked domains | Test PC DNS not pointed at Pi |
+| Dashboard won't load | `sudo systemctl status phalanx` |
+| Blocklist shows 0 domains | `sudo systemctl restart phalanx` (needs internet) |
+| Pi lost internet after install | `sudo cp /etc/resolv.conf.bak.phalanx /etc/resolv.conf` |
+| Port 53 permission denied | Must run as root (systemd handles this) |
+| No queries in dashboard | No devices routing DNS through the Pi yet |
+| GeoIP shows no data | Click "Scan origins" after generating some blocked queries |
+| Network scan empty | Install nmap: `sudo apt install nmap` |
+| DoH errors in log | Expected if Pi DNS points at itself; uses UDP fallback |
+| Can't SSH after port swap | Use port 2222: `ssh user@<PI_IP> -p 2222` |
+| Locked out of SSH entirely | Connect monitor + keyboard, `sudo cp /etc/ssh/sshd_config.bak.phalanx /etc/ssh/sshd_config && sudo systemctl restart ssh` |
+| Honeypot not catching anything | Run `sudo systemctl restart phalanx` after the port swap. Verify with `ssh root@<PI_IP>` (port 22). |
+| Port 22 already in use | The SSH port swap didn't run. Run `sudo bash /opt/phalanx/scripts/setup_honeypot_ports.sh` first. |

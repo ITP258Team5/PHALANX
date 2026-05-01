@@ -77,7 +77,7 @@ BLOCKLIST_FROZEN_MSG = (
 
 # ── Subscription ──
 SUBSCRIPTION_API_URL = os.getenv(
-    "PHALANX_SUB_API", "https://api.phalanx.example.com/v1"
+    "PHALANX_SUB_API", "https://phalanx-cloud.onrender.com"
 )
 SUBSCRIPTION_CHECK_INTERVAL = 3600  # re-validate every hour
 SUBSCRIPTION_GRACE_PERIOD = 7  # days after expiry before freezing lists

@@ -73,6 +73,32 @@ def extract_query_name(data: bytes) -> Optional[str]:
         return None
 
 
+# DNS record type codes to human-readable names
+_QTYPE_MAP = {
+    1: "A", 2: "NS", 5: "CNAME", 6: "SOA", 12: "PTR",
+    15: "MX", 16: "TXT", 28: "AAAA", 33: "SRV", 65: "HTTPS",
+    255: "ANY",
+}
+
+
+def extract_query_info(data: bytes) -> Optional[dict]:
+    """
+    Extract query name, type, and class from a DNS packet.
+    Returns {"name": str, "qtype": str, "qtype_num": int} or None.
+    """
+    if len(data) < 12:
+        return None
+    try:
+        name, end_offset = parse_dns_name(data, 12)
+        if end_offset + 4 > len(data):
+            return {"name": name, "qtype": "?", "qtype_num": 0}
+        qtype_num = struct.unpack("!H", data[end_offset:end_offset + 2])[0]
+        qtype = _QTYPE_MAP.get(qtype_num, f"TYPE{qtype_num}")
+        return {"name": name, "qtype": qtype, "qtype_num": qtype_num}
+    except Exception:
+        return None
+
+
 def build_blocked_response(query: bytes) -> bytes:
     """
     Build an NXDOMAIN response for a blocked domain.
@@ -262,6 +288,23 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
             "queries": 0, "blocked": 0, "forwarded": 0, "cached": 0,
             "doh_enabled": config.DOH_ENABLED, "blocking_enabled": True,
         }
+        # Ring buffers for live dashboard — instant feedback, no DB delay
+        self._recent_blocked: list[dict] = []
+        self._recent_allowed: list[dict] = []
+        self._max_recent = 50
+
+        # Full query log for advanced reporting (last 200 entries)
+        self._query_log: list[dict] = []
+        self._max_log = 200
+
+        # In-memory aggregations for instant reporting
+        self._domain_block_counts: dict[str, int] = {}     # domain → count
+        self._domain_allow_counts: dict[str, int] = {}     # domain → count
+        self._client_query_counts: dict[str, int] = {}     # client_ip → total queries
+        self._client_block_counts: dict[str, int] = {}     # client_ip → blocked queries
+        self._qtype_counts: dict[str, int] = {}            # qtype → count
+        self._hourly_blocks: dict[int, int] = {}           # hour_of_day → blocked count
+        self._hourly_total: dict[int, int] = {}            # hour_of_day → total count
 
     def connection_made(self, transport):
         self.transport = transport
@@ -269,9 +312,61 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data: bytes, addr: tuple):
         asyncio.ensure_future(self._handle(data, addr))
 
+    def _record_event(self, client_ip: str, domain: str, qtype: str,
+                      blocked: bool, matched_rule: str, resolution: str,
+                      latency_ms: float):
+        """Record a DNS event for live dashboard and reporting."""
+        import time as _time
+        now = _time.time()
+        hour = int((_time.localtime(now).tm_hour))
+
+        entry = {
+            "domain": domain,
+            "client": client_ip,
+            "qtype": qtype,
+            "blocked": blocked,
+            "matched_rule": matched_rule,
+            "resolution": resolution,
+            "latency_ms": round(latency_ms, 2),
+            "time": now,
+        }
+
+        # Live feeds
+        if blocked:
+            self._recent_blocked.append(entry)
+            if len(self._recent_blocked) > self._max_recent:
+                self._recent_blocked.pop(0)
+        else:
+            self._recent_allowed.append(entry)
+            if len(self._recent_allowed) > self._max_recent:
+                self._recent_allowed.pop(0)
+
+        # Full log
+        self._query_log.append(entry)
+        if len(self._query_log) > self._max_log:
+            self._query_log.pop(0)
+
+        # Aggregations
+        if blocked:
+            self._domain_block_counts[domain] = self._domain_block_counts.get(domain, 0) + 1
+            self._client_block_counts[client_ip] = self._client_block_counts.get(client_ip, 0) + 1
+            self._hourly_blocks[hour] = self._hourly_blocks.get(hour, 0) + 1
+        else:
+            self._domain_allow_counts[domain] = self._domain_allow_counts.get(domain, 0) + 1
+
+        self._client_query_counts[client_ip] = self._client_query_counts.get(client_ip, 0) + 1
+        self._qtype_counts[qtype] = self._qtype_counts.get(qtype, 0) + 1
+        self._hourly_total[hour] = self._hourly_total.get(hour, 0) + 1
+
     async def _handle(self, data: bytes, addr: tuple):
+        import time as _time
+        start_time = _time.monotonic()
+
         self._stats["queries"] += 1
-        domain = extract_query_name(data)
+
+        query_info = extract_query_info(data)
+        domain = query_info["name"] if query_info else extract_query_name(data)
+        qtype = query_info["qtype"] if query_info else "?"
 
         if domain is None:
             return
@@ -280,18 +375,22 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
 
         # Check blocklist (only if blocking engine is enabled)
         blocked = False
+        matched_rule = ""
         if self.blocking_enabled:
             parts = domain.split(".")
             for i in range(len(parts) - 1):
                 candidate = ".".join(parts[i:])
                 if candidate in self.blocklist:
                     blocked = True
+                    matched_rule = candidate
                     break
 
         if blocked:
             self._stats["blocked"] += 1
             response = build_blocked_response(data)
             self.transport.sendto(response, addr)
+            elapsed = (_time.monotonic() - start_time) * 1000
+            self._record_event(client_ip, domain, qtype, True, matched_rule, "NXDOMAIN", elapsed)
             if self.traffic_callback:
                 self.traffic_callback(client_ip, domain, blocked=True)
             return
@@ -301,6 +400,8 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
         if cached:
             self._stats["cached"] += 1
             self.transport.sendto(cached, addr)
+            elapsed = (_time.monotonic() - start_time) * 1000
+            self._record_event(client_ip, domain, qtype, False, "", "CACHED", elapsed)
             if self.traffic_callback:
                 self.traffic_callback(client_ip, domain, blocked=False)
             return
@@ -312,6 +413,9 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
             self.cache.put(data, response, ttl=config.DNS_CACHE_TTL)
             self.transport.sendto(response, addr)
 
+        elapsed = (_time.monotonic() - start_time) * 1000
+        resolution = "RESOLVED" if response else "FAILED"
+        self._record_event(client_ip, domain, qtype, False, "", resolution, elapsed)
         if self.traffic_callback:
             self.traffic_callback(client_ip, domain, blocked=False)
 

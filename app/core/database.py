@@ -22,7 +22,7 @@ logger = logging.getLogger("phalanx.db")
 _local = threading.local()
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 MIGRATIONS = {
     1: """
@@ -377,6 +377,161 @@ MIGRATIONS = {
         ('Hagezi Pro', 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt', 'domains', 1, 0),
         ('Hagezi Ultimate', 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/ultimate.txt', 'domains', 1, 0),
         ('Phalanx Curated', '', 'domains', 1, 0);
+    """,
+
+    3: """
+    -- ══════════════════════════════════════════
+    -- v3: Honeypot system, enhanced device tracking
+    -- ══════════════════════════════════════════
+
+    -- ── Connected devices (richer than v1 devices table) ──
+    CREATE TABLE IF NOT EXISTS connected_devices (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        mac_address       TEXT NOT NULL,
+        ip_address        TEXT NOT NULL,
+        hostname          TEXT,
+        vendor            TEXT,
+        device_type       TEXT DEFAULT 'unknown',
+        label             TEXT,
+        trust_level       TEXT DEFAULT 'unknown',
+        first_seen        REAL NOT NULL DEFAULT 0,
+        last_seen         REAL NOT NULL DEFAULT 0,
+        last_ip           TEXT,
+        is_online         INTEGER NOT NULL DEFAULT 1,
+        is_blocked        INTEGER NOT NULL DEFAULT 0,
+        is_honeypot_decoy INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (mac_address)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cdev_mac ON connected_devices(mac_address);
+    CREATE INDEX IF NOT EXISTS idx_cdev_ip ON connected_devices(ip_address);
+    CREATE INDEX IF NOT EXISTS idx_cdev_trust ON connected_devices(trust_level);
+
+    -- ── Device IP history (DHCP lease audit trail) ──
+    CREATE TABLE IF NOT EXISTS device_ip_history (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        mac_address     TEXT NOT NULL,
+        ip_address      TEXT NOT NULL,
+        assigned_at     REAL NOT NULL DEFAULT 0,
+        released_at     REAL,
+        lease_source    TEXT DEFAULT 'dhcp',
+        FOREIGN KEY (mac_address) REFERENCES connected_devices(mac_address)
+    );
+    CREATE INDEX IF NOT EXISTS idx_iph_mac ON device_ip_history(mac_address);
+
+    -- ── Honeypot sessions ──
+    CREATE TABLE IF NOT EXISTS honeypot_sessions (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        attacker_ip       TEXT NOT NULL,
+        attacker_port     INTEGER,
+        decoy_ip          TEXT NOT NULL,
+        decoy_port        INTEGER NOT NULL,
+        protocol          TEXT NOT NULL DEFAULT 'TCP',
+        started_at        REAL NOT NULL DEFAULT 0,
+        ended_at          REAL,
+        duration_ms       REAL,
+        severity          TEXT NOT NULL DEFAULT 'low',
+        service_emulated  TEXT,
+        attack_class      TEXT,
+        attacker_mac      TEXT,
+        attacker_hostname TEXT,
+        geo_country       TEXT,
+        geo_city          TEXT,
+        asn               TEXT,
+        was_blocked       INTEGER NOT NULL DEFAULT 0,
+        alert_id          INTEGER REFERENCES alerts(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_hps_attacker ON honeypot_sessions(attacker_ip);
+    CREATE INDEX IF NOT EXISTS idx_hps_started ON honeypot_sessions(started_at);
+    CREATE INDEX IF NOT EXISTS idx_hps_severity ON honeypot_sessions(severity);
+
+    -- ── Honeypot event log ──
+    CREATE TABLE IF NOT EXISTS honeypot_log (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id       INTEGER NOT NULL,
+        timestamp        REAL NOT NULL DEFAULT 0,
+        event_type       TEXT NOT NULL,
+        username         TEXT,
+        password_raw     TEXT,
+        auth_result      TEXT,
+        raw_payload      BLOB,
+        decoded_payload  TEXT,
+        payload_size_bytes INTEGER,
+        notes            TEXT,
+        FOREIGN KEY (session_id) REFERENCES honeypot_sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_hpl_session ON honeypot_log(session_id);
+    CREATE INDEX IF NOT EXISTS idx_hpl_ts ON honeypot_log(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_hpl_type ON honeypot_log(event_type);
+
+    -- ── Honeypot decoy configuration ──
+    CREATE TABLE IF NOT EXISTS honeypot_decoys (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        decoy_ip        TEXT NOT NULL,
+        decoy_port      INTEGER NOT NULL,
+        protocol        TEXT NOT NULL DEFAULT 'TCP',
+        service_name    TEXT NOT NULL,
+        banner          TEXT,
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        created_at      REAL NOT NULL DEFAULT 0,
+        notes           TEXT,
+        UNIQUE (decoy_ip, decoy_port, protocol)
+    );
+
+    -- ── Honeypot views ──
+
+    CREATE VIEW IF NOT EXISTS v_honeypot_attacker_summary AS
+    SELECT
+        attacker_ip,
+        attacker_mac,
+        attacker_hostname,
+        COUNT(*) AS total_sessions,
+        SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) AS critical_count,
+        SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END) AS high_count,
+        MIN(started_at) AS first_seen,
+        MAX(started_at) AS last_seen,
+        GROUP_CONCAT(DISTINCT service_emulated) AS services_targeted,
+        GROUP_CONCAT(DISTINCT attack_class) AS attack_classes
+    FROM honeypot_sessions
+    GROUP BY attacker_ip;
+
+    CREATE VIEW IF NOT EXISTS v_honeypot_top_credentials AS
+    SELECT
+        username,
+        password_raw,
+        COUNT(*) AS attempts,
+        MIN(timestamp) AS first_attempt,
+        MAX(timestamp) AS last_attempt
+    FROM honeypot_log
+    WHERE event_type = 'auth_attempt' AND username IS NOT NULL
+    GROUP BY username, password_raw
+    ORDER BY attempts DESC;
+
+    CREATE VIEW IF NOT EXISTS v_honeypot_hourly_volume AS
+    SELECT
+        CAST(started_at / 3600 AS INTEGER) * 3600 AS hour_bucket,
+        COUNT(*) AS session_count,
+        COUNT(DISTINCT attacker_ip) AS unique_attackers,
+        SUM(CASE WHEN severity IN ('high','critical') THEN 1 ELSE 0 END) AS high_severity_count
+    FROM honeypot_sessions
+    GROUP BY hour_bucket
+    ORDER BY hour_bucket DESC;
+
+    -- ── Trigger: auto-create alert on high/critical honeypot session ──
+    CREATE TRIGGER IF NOT EXISTS trg_honeypot_alert
+    AFTER INSERT ON honeypot_sessions
+    WHEN NEW.severity IN ('high', 'critical')
+    BEGIN
+        INSERT INTO alerts (severity, device_ip, message, details, timestamp, alert_group)
+        VALUES (
+            NEW.severity,
+            NEW.attacker_ip,
+            'Honeypot: ' || COALESCE(NEW.attack_class, 'unknown') || ' on ' || NEW.service_emulated || ' port ' || NEW.decoy_port,
+            'Attacker: ' || NEW.attacker_ip || ' → ' || NEW.decoy_ip || ':' || NEW.decoy_port,
+            NEW.started_at,
+            'honeypot'
+        );
+        UPDATE honeypot_sessions SET alert_id = last_insert_rowid() WHERE id = NEW.id;
+    END;
     """,
 }
 
