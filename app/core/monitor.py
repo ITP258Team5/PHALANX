@@ -97,6 +97,14 @@ class TrafficMonitor:
 
         with transaction(conn):
             for ip, stats in batch.items():
+                # Device must exist before traffic_log (FK constraint)
+                conn.execute(
+                    """INSERT INTO devices (ip, first_seen, last_seen)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(ip) DO UPDATE SET last_seen = excluded.last_seen""",
+                    (ip, stats.first_seen, stats.last_seen),
+                )
+
                 for domain in stats.unique_domains:
                     was_blocked = 1 if stats.blocked > 0 else 0
                     conn.execute(
@@ -105,13 +113,6 @@ class TrafficMonitor:
                            VALUES (?, ?, ?, ?, ?)""",
                         (stats.last_seen, ip, domain, was_blocked, ""),
                     )
-
-                conn.execute(
-                    """INSERT INTO devices (ip, first_seen, last_seen)
-                       VALUES (?, ?, ?)
-                       ON CONFLICT(ip) DO UPDATE SET last_seen = excluded.last_seen""",
-                    (ip, stats.first_seen, stats.last_seen),
-                )
 
         alerts = self._check_anomalies(batch, conn)
         if alerts:

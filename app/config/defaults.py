@@ -25,7 +25,7 @@ DNS_CACHE_TTL = 300  # seconds, for blocked responses
 # ── DNS-over-HTTPS (DoH) ──
 # When enabled, upstream queries go via HTTPS instead of plain UDP.
 # This prevents your ISP from seeing what domains the household resolves.
-DOH_ENABLED = os.getenv("PHALANX_DOH", "true").lower() == "true"
+DOH_ENABLED = os.getenv("PHALANX_DOH", "false").lower() == "true"
 DOH_UPSTREAM = [
     "https://cloudflare-dns.com/dns-query",
     "https://dns.google/dns-query",

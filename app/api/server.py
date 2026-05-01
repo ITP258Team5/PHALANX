@@ -232,8 +232,33 @@ def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Applicat
         monitor = request.app["monitor"]
         blocklist = request.app["blocklist"]
         sub = request.app["sub"]
+        dns_proto = request.app.get("dns_protocol")
 
-        devices = monitor.get_device_summary()
+        # Get DB devices
+        db_devices = monitor.get_device_summary()
+        db_ips = {d["ip"] for d in db_devices}
+
+        # Merge in-memory clients that haven't been flushed to DB yet
+        if dns_proto:
+            now = time.time()
+            for ip, last_seen in dns_proto._client_last_seen.items():
+                if ip not in db_ips:
+                    db_devices.append({
+                        "ip": ip,
+                        "mac": "",
+                        "name": ip,
+                        "device_type": "unknown",
+                        "first_seen": last_seen,
+                        "last_seen": last_seen,
+                        "is_blocked": False,
+                    })
+                else:
+                    # Update last_seen from memory if more recent than DB
+                    for d in db_devices:
+                        if d["ip"] == ip and last_seen > d.get("last_seen", 0):
+                            d["last_seen"] = last_seen
+
+        devices = db_devices
         alerts = monitor.get_alerts(limit=10)
         staleness = blocklist.staleness_warning()
 
@@ -263,7 +288,20 @@ def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Applicat
     # ── Devices ──
 
     async def device_list(request: web.Request):
+        """Device list also merges in-memory clients."""
+        dns_proto = request.app.get("dns_protocol")
         devices = request.app["monitor"].get_device_summary()
+        db_ips = {d["ip"] for d in devices}
+
+        if dns_proto:
+            for ip, last_seen in dns_proto._client_last_seen.items():
+                if ip not in db_ips:
+                    devices.append({
+                        "ip": ip, "mac": "", "name": ip,
+                        "device_type": "unknown", "first_seen": last_seen,
+                        "last_seen": last_seen, "is_blocked": False,
+                    })
+
         return web.json_response({"devices": devices})
 
     async def device_rename(request: web.Request):

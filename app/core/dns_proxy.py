@@ -302,6 +302,7 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
         self._domain_allow_counts: dict[str, int] = {}     # domain → count
         self._client_query_counts: dict[str, int] = {}     # client_ip → total queries
         self._client_block_counts: dict[str, int] = {}     # client_ip → blocked queries
+        self._client_last_seen: dict[str, float] = {}      # client_ip → timestamp
         self._qtype_counts: dict[str, int] = {}            # qtype → count
         self._hourly_blocks: dict[int, int] = {}           # hour_of_day → blocked count
         self._hourly_total: dict[int, int] = {}            # hour_of_day → total count
@@ -355,6 +356,7 @@ class DNSServerProtocol(asyncio.DatagramProtocol):
             self._domain_allow_counts[domain] = self._domain_allow_counts.get(domain, 0) + 1
 
         self._client_query_counts[client_ip] = self._client_query_counts.get(client_ip, 0) + 1
+        self._client_last_seen[client_ip] = now
         self._qtype_counts[qtype] = self._qtype_counts.get(qtype, 0) + 1
         self._hourly_total[hour] = self._hourly_total.get(hour, 0) + 1
 
