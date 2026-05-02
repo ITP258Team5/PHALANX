@@ -243,10 +243,20 @@ def create_app(subscription_mgr, blocklist_mgr, traffic_monitor) -> web.Applicat
             now = time.time()
             for ip, last_seen in dns_proto._client_last_seen.items():
                 if ip not in db_ips:
+                    # Try reverse DNS for a hostname
+                    hostname = ip
+                    try:
+                        import socket
+                        result = socket.gethostbyaddr(ip)
+                        if result and result[0]:
+                            hostname = result[0].split(".")[0]  # Short hostname
+                    except (socket.herror, socket.gaierror, OSError):
+                        pass
+
                     db_devices.append({
                         "ip": ip,
                         "mac": "",
-                        "name": ip,
+                        "name": hostname,
                         "device_type": "unknown",
                         "first_seen": last_seen,
                         "last_seen": last_seen,
@@ -736,6 +746,10 @@ _FALLBACK_HTML = """<!DOCTYPE html>
 <div class="header">
   <div class="logo">P</div>
   <div><div class="title">Project Phalanx</div><div class="subtitle">Home Network Guardian</div></div>
+  <div style="display:flex;gap:4px;margin-left:24px;">
+    <button id="nav-dashboard" class="btn" onclick="showView('dashboard')" style="background:rgba(59,130,253,0.15);color:#3b82f6;font-size:13px;">Dashboard</button>
+    <button id="nav-advanced" class="btn btn-gray" onclick="showView('advanced')" style="font-size:13px;">Advanced</button>
+  </div>
   <div class="toggle">
     <span id="engine-label" style="font-size:12px;color:#6b7280;">Blocking:</span>
     <div id="engine-dot" class="toggle-dot" style="background:#22c55e;"></div>
@@ -744,6 +758,7 @@ _FALLBACK_HTML = """<!DOCTYPE html>
 </div>
 
 <div class="container">
+  <div id="view-dashboard">
   <div class="cards">
     <div class="card">
       <div class="card-label">Devices</div>
@@ -804,16 +819,23 @@ _FALLBACK_HTML = """<!DOCTYPE html>
     <div id="device-list"><div style="color:#6b7280;font-size:12px;">Loading...</div></div>
   </div>
 
-  <!-- Advanced Reporting -->
-  <div style="margin-top:20px;border-top:1px solid #2a2d3a;padding-top:16px;">
-    <button class="btn btn-gray" id="report-btn" onclick="toggleReport()" style="width:100%;text-align:left;padding:12px 18px;border:1px solid #2a2d3a;border-radius:10px;display:flex;align-items:center;gap:8px;">
-      <span style="font-size:15px;">&#128202;</span>
-      <span style="font-weight:600;">Advanced Reporting</span>
-      <span id="report-arrow" style="margin-left:auto;font-size:11px;transition:transform 0.2s;">&#9660;</span>
-    </button>
+  </div><!-- end view-dashboard -->
 
-    <div id="report-panel" style="display:none;margin-top:14px;">
-      <!-- Summary stats bar -->
+  <!-- ADVANCED VIEW -->
+  <div id="view-advanced" style="display:none;">
+
+  <!-- Tab navigation for reporting panels -->
+  <div style="margin-top:16px;">
+    <div style="display:flex;gap:4px;border-bottom:1px solid #2a2d3a;padding-bottom:0;margin-bottom:0;">
+      <button class="tab-btn active" onclick="showTab('reporting',this)" style="padding:10px 18px;border:none;border-bottom:2px solid #3b82f6;background:none;color:#3b82f6;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Reporting</button>
+      <button class="tab-btn" onclick="showTab('threats',this)" style="padding:10px 18px;border:none;border-bottom:2px solid transparent;background:none;color:#6b7280;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Threat Map</button>
+      <button class="tab-btn" onclick="showTab('network',this)" style="padding:10px 18px;border:none;border-bottom:2px solid transparent;background:none;color:#6b7280;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Network</button>
+      <button class="tab-btn" onclick="showTab('honeypot',this)" style="padding:10px 18px;border:none;border-bottom:2px solid transparent;background:none;color:#6b7280;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Honeypot</button>
+      <button class="tab-btn" onclick="showTab('system',this)" style="padding:10px 18px;border:none;border-bottom:2px solid transparent;background:none;color:#6b7280;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">System</button>
+    </div>
+
+    <!-- REPORTING TAB -->
+    <div id="tab-reporting" class="tab-content" style="padding-top:14px;">
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">
         <div class="panel" style="padding:12px;"><div class="card-label">Block rate</div><div id="r-block-rate" class="card-value" style="font-size:20px;color:#f05252;">—</div></div>
         <div class="panel" style="padding:12px;"><div class="card-label">Avg latency</div><div id="r-latency" class="card-value" style="font-size:20px;color:#a78bfa;">—</div></div>
@@ -821,7 +843,6 @@ _FALLBACK_HTML = """<!DOCTYPE html>
         <div class="panel" style="padding:12px;"><div class="card-label">Active clients</div><div id="r-clients" class="card-value" style="font-size:20px;color:#22c55e;">—</div></div>
       </div>
 
-      <!-- Top blocked + query types row -->
       <div class="row">
         <div class="col panel">
           <div class="section-title" style="margin-bottom:8px;">Top blocked domains</div>
@@ -833,14 +854,11 @@ _FALLBACK_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- Per-client breakdown -->
       <div class="panel" style="margin-bottom:16px;">
         <div class="section-title" style="margin-bottom:8px;">Per-device breakdown</div>
-        <div style="font-size:11px;color:#4e5470;margin-bottom:8px;">Queries, blocks, and block rate per connected device</div>
         <div id="r-clients-table"></div>
       </div>
 
-      <!-- Hourly activity -->
       <div class="panel" style="margin-bottom:16px;">
         <div class="section-title" style="margin-bottom:8px;">Hourly activity</div>
         <div id="r-hourly" style="display:flex;align-items:flex-end;gap:2px;height:80px;padding-top:8px;"></div>
@@ -849,7 +867,6 @@ _FALLBACK_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- Full query log -->
       <div class="panel">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
           <div class="section-title" style="margin:0;">Query log</div>
@@ -861,85 +878,96 @@ _FALLBACK_HTML = """<!DOCTYPE html>
         </div>
         <div id="r-query-log" style="max-height:300px;overflow-y:auto;font-family:'JetBrains Mono',monospace;font-size:11px;"></div>
       </div>
+    </div>
 
-      <!-- Threat Intelligence -->
-      <div class="panel" style="margin-top:16px;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-          <div class="section-title" style="margin:0;">Threat intelligence</div>
-          <button class="btn btn-blue" style="font-size:11px;padding:3px 10px;" onclick="fetchGeoIP()">Scan origins</button>
+    <!-- THREAT MAP TAB -->
+    <div id="tab-threats" class="tab-content" style="display:none;padding-top:14px;">
+      <div class="panel" style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <div class="section-title" style="margin:0;">Threat origin map</div>
+          <button class="btn btn-blue" style="font-size:11px;padding:4px 12px;" onclick="fetchGeoIP()">Scan origins</button>
         </div>
-        <div style="font-size:11px;color:#4e5470;margin-bottom:10px;">Geographic origin of blocked domains — shows where trackers and ads are hosted</div>
-        <div id="r-geoip-countries" style="margin-bottom:12px;"></div>
-        <div id="r-geoip-table" style="max-height:220px;overflow-y:auto;font-size:11px;"></div>
+        <div style="font-size:11px;color:#4e5470;margin-bottom:14px;">Geographic origin of blocked trackers and ads. Click "Scan origins" after browsing with Phalanx active.</div>
+
+        <!-- Visual region map -->
+        <div id="r-threat-map" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;"></div>
+
+        <!-- Country breakdown -->
+        <div class="section-title" style="margin-bottom:8px;margin-top:16px;">By country</div>
+        <div id="r-geoip-countries" style="margin-bottom:14px;"></div>
       </div>
 
-      <!-- Network Device Discovery -->
-      <div class="panel" style="margin-top:16px;">
+      <div class="panel">
+        <div class="section-title" style="margin-bottom:8px;">Threat detail</div>
+        <div style="font-size:11px;color:#4e5470;margin-bottom:8px;">Each blocked domain with its resolved IP, hosting location, and ISP</div>
+        <div id="r-geoip-table" style="max-height:300px;overflow-y:auto;font-size:11px;"></div>
+      </div>
+    </div>
+
+    <!-- NETWORK TAB -->
+    <div id="tab-network" class="tab-content" style="display:none;padding-top:14px;">
+      <div class="panel" style="margin-bottom:16px;">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
           <div class="section-title" style="margin:0;">Network device discovery</div>
-          <button class="btn btn-blue" style="font-size:11px;padding:3px 10px;" onclick="fetchNetScan()">Scan network</button>
+          <button class="btn btn-blue" style="font-size:11px;padding:4px 12px;" onclick="fetchNetScan()">Scan network</button>
         </div>
-        <div style="font-size:11px;color:#4e5470;margin-bottom:10px;">All devices detected on your local network — IP, MAC address, vendor, and hostname</div>
+        <div style="font-size:11px;color:#4e5470;margin-bottom:10px;">All devices detected on your local network via nmap or ARP scan</div>
         <div id="r-net-scan"></div>
       </div>
+    </div>
 
-      <!-- System Health -->
-      <div class="panel" style="margin-top:16px;">
+    <!-- HONEYPOT TAB -->
+    <div id="tab-honeypot" class="tab-content" style="display:none;padding-top:14px;">
+      <div class="panel">
+        <div style="font-size:11px;color:#4e5470;margin-bottom:12px;">Fake services trapping attackers — SSH(:22), Telnet(:23), HTTP(:8888), FTP(:21). Real SSH is on port 2222.</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+          <div style="background:#0f1117;border-radius:8px;padding:10px;"><div class="card-label">Sessions</div><div id="hp-sessions" style="font-size:18px;font-weight:700;color:#a78bfa;margin-top:2px;">0</div></div>
+          <div style="background:#0f1117;border-radius:8px;padding:10px;"><div class="card-label">Attackers</div><div id="hp-attackers" style="font-size:18px;font-weight:700;color:#f5a623;margin-top:2px;">0</div></div>
+          <div style="background:#0f1117;border-radius:8px;padding:10px;"><div class="card-label">Auth attempts</div><div id="hp-auth" style="font-size:18px;font-weight:700;color:#f05252;margin-top:2px;">0</div></div>
+          <div style="background:#0f1117;border-radius:8px;padding:10px;"><div class="card-label">High severity</div><div id="hp-critical" style="font-size:18px;font-weight:700;color:#f05252;margin-top:2px;">0</div></div>
+        </div>
+        <div class="row">
+          <div class="col"><div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:6px;">Recent sessions</div><div id="hp-session-list" style="max-height:200px;overflow-y:auto;font-size:11px;"></div></div>
+          <div class="col"><div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:6px;">Top captured credentials</div><div id="hp-creds" style="max-height:200px;overflow-y:auto;font-size:11px;font-family:'JetBrains Mono',monospace;"></div></div>
+        </div>
+        <div style="margin-top:12px;"><div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:6px;">Event log</div><div id="hp-events" style="max-height:220px;overflow-y:auto;font-size:11px;font-family:'JetBrains Mono',monospace;"></div></div>
+      </div>
+    </div>
+
+    <!-- SYSTEM TAB -->
+    <div id="tab-system" class="tab-content" style="display:none;padding-top:14px;">
+      <div class="panel">
         <div class="section-title" style="margin-bottom:10px;">System health</div>
         <div id="r-sys-health"></div>
       </div>
-
-      <!-- Honeypot -->
-      <div class="panel" style="margin-top:16px;">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-          <div class="section-title" style="margin:0;">Honeypot</div>
-          <button class="btn btn-blue" style="font-size:11px;padding:3px 10px;" onclick="fetchHoneypot()">Refresh</button>
-        </div>
-        <div style="font-size:11px;color:#4e5470;margin-bottom:12px;">Fake services trapping attackers — SSH(:22), Telnet(:23), HTTP(:8888), FTP(:21). Real SSH is on port 2222.</div>
-
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
-          <div style="background:#0f1117;border-radius:8px;padding:10px;">
-            <div class="card-label">Sessions</div>
-            <div id="hp-sessions" style="font-size:18px;font-weight:700;color:#a78bfa;margin-top:2px;">0</div>
-          </div>
-          <div style="background:#0f1117;border-radius:8px;padding:10px;">
-            <div class="card-label">Attackers</div>
-            <div id="hp-attackers" style="font-size:18px;font-weight:700;color:#f5a623;margin-top:2px;">0</div>
-          </div>
-          <div style="background:#0f1117;border-radius:8px;padding:10px;">
-            <div class="card-label">Auth attempts</div>
-            <div id="hp-auth" style="font-size:18px;font-weight:700;color:#f05252;margin-top:2px;">0</div>
-          </div>
-          <div style="background:#0f1117;border-radius:8px;padding:10px;">
-            <div class="card-label">High severity</div>
-            <div id="hp-critical" style="font-size:18px;font-weight:700;color:#f05252;margin-top:2px;">0</div>
-          </div>
-        </div>
-
-        <div class="row">
-          <div class="col">
-            <div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:6px;">Recent sessions</div>
-            <div id="hp-session-list" style="max-height:200px;overflow-y:auto;font-size:11px;"></div>
-          </div>
-          <div class="col">
-            <div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:6px;">Top captured credentials</div>
-            <div id="hp-creds" style="max-height:200px;overflow-y:auto;font-size:11px;font-family:'JetBrains Mono',monospace;"></div>
-          </div>
-        </div>
-
-        <div style="margin-top:12px;">
-          <div style="font-size:12px;font-weight:600;color:#9ca3af;margin-bottom:6px;">Event log</div>
-          <div id="hp-events" style="max-height:220px;overflow-y:auto;font-size:11px;font-family:'JetBrains Mono',monospace;"></div>
-        </div>
-      </div>
     </div>
   </div>
-</div>
+  </div><!-- end view-advanced -->
+</div><!-- end container -->
 
 <div id="status-bar">Connecting to Phalanx...</div>
 
 <script>
 const H = {'Content-Type':'application/json','X-Phalanx-Request':'1'};
+
+let currentView = 'dashboard';
+let activeTab = 'reporting';
+
+function showView(view) {
+  currentView = view;
+  document.getElementById('view-dashboard').style.display = view === 'dashboard' ? 'block' : 'none';
+  document.getElementById('view-advanced').style.display = view === 'advanced' ? 'block' : 'none';
+  document.getElementById('nav-dashboard').style.background = view === 'dashboard' ? 'rgba(59,130,253,0.15)' : 'rgba(124,130,152,0.12)';
+  document.getElementById('nav-dashboard').style.color = view === 'dashboard' ? '#3b82f6' : '#9ca3af';
+  document.getElementById('nav-advanced').style.background = view === 'advanced' ? 'rgba(59,130,253,0.15)' : 'rgba(124,130,152,0.12)';
+  document.getElementById('nav-advanced').style.color = view === 'advanced' ? '#3b82f6' : '#9ca3af';
+  if (view === 'advanced') {
+    fetchReport();
+    fetchHealth();
+    fetchGeoIP();
+    fetchHoneypot();
+  }
+}
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 
@@ -976,7 +1004,19 @@ async function refresh() {
     if(dash.devices.list&&dash.devices.list.length>0){
       dl.innerHTML=dash.devices.list.map(d=>{
         const on=(Date.now()/1000-d.last_seen)<300;
-        return '<div class="device"><div><div class="device-name">'+esc(d.name)+'</div><div class="device-meta">'+esc(d.ip)+' · '+esc(d.device_type)+'</div></div><div class="dot '+(on?'dot-green':'dot-gray')+'"></div></div>';
+        const isIpName = d.name === d.ip || !d.name;
+        const displayName = isIpName ? d.ip : d.name;
+        return '<div class="device">'+
+          '<div style="flex:1;">'+
+            '<div class="device-name">'+esc(displayName)+
+              (isIpName ? ' <span style="font-size:10px;color:#4e5470;cursor:pointer;" onclick="renameDevice(\''+esc(d.ip)+'\')">[name it]</span>' : '')+
+            '</div>'+
+            '<div class="device-meta">'+esc(d.ip)+(d.device_type&&d.device_type!=='unknown'?' · '+esc(d.device_type):'')+
+              (!isIpName ? ' <span style="cursor:pointer;color:#4e5470;" onclick="renameDevice(\''+esc(d.ip)+'\')">[rename]</span>' : '')+
+            '</div>'+
+          '</div>'+
+          '<div class="dot '+(on?'dot-green':'dot-gray')+'"></div>'+
+        '</div>';
       }).join('');
     } else {
       dl.innerHTML='<div style="color:#6b7280;font-size:12px;">No devices seen yet. Point a device DNS to this Pi.</div>';
@@ -1044,18 +1084,35 @@ async function toggleEngine() {
 refresh();
 setInterval(refresh, 3000);
 
-// ── Advanced Reporting ──
-let reportOpen = false;
-let reportData = null;
-let logFilter = 'all';
+// ── Tab Navigation ──
 
-function toggleReport() {
-  reportOpen = !reportOpen;
-  document.getElementById('report-panel').style.display = reportOpen ? 'block' : 'none';
-  document.getElementById('report-arrow').style.transform = reportOpen ? 'rotate(180deg)' : 'none';
-  if (reportOpen) { fetchReport(); fetchHealth(); fetchHoneypot(); }
+function showTab(name, btn) {
+  activeTab = name;
+  document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+  document.querySelectorAll('.tab-btn').forEach(b => { b.style.color = '#6b7280'; b.style.borderBottomColor = 'transparent'; });
+  document.getElementById('tab-' + name).style.display = 'block';
+  btn.style.color = '#3b82f6';
+  btn.style.borderBottomColor = '#3b82f6';
+
+  // Fetch data for the tab
+  if (name === 'reporting') fetchReport();
+  if (name === 'threats') fetchGeoIP();
+  if (name === 'network') fetchNetScan();
+  if (name === 'honeypot') fetchHoneypot();
+  if (name === 'system') fetchHealth();
 }
 
+// Auto-load reporting tab on page load
+setTimeout(fetchReport, 1000);
+setInterval(function() {
+  if (activeTab === 'reporting') fetchReport();
+  if (activeTab === 'threats') fetchGeoIP();
+  if (activeTab === 'honeypot') fetchHoneypot();
+  if (activeTab === 'system') fetchHealth();
+}, 5000);
+
+let reportData = null;
+let logFilter = 'all';
 function setLogFilter(f) { logFilter = f; if (reportData) renderQueryLog(reportData.query_log); }
 
 async function fetchReport() {
@@ -1178,7 +1235,17 @@ function renderQueryLog(logs) {
 }
 
 // Auto-refresh report if panel is open
-setInterval(function() { if (reportOpen) fetchReport(); }, 5000);
+setInterval(function() { if (currentView === 'advanced') fetchReport(); }, 5000);
+
+// ── Device Rename ──
+function renameDevice(ip) {
+  const name = prompt('Enter a name for device ' + ip + ':');
+  if (!name || !name.trim()) return;
+  fetch('/api/devices/rename', {
+    method: 'POST', headers: H,
+    body: JSON.stringify({ip: ip, name: name.trim()})
+  }).then(() => refresh());
+}
 
 // ── Threat Intelligence (GeoIP) ──
 async function fetchGeoIP() {
@@ -1193,7 +1260,55 @@ async function fetchGeoIP() {
 }
 
 function renderGeoIP(d) {
-  // Country summary
+  // Threat map — visual region blocks
+  const tm = document.getElementById('r-threat-map');
+  if (d.countries && d.countries.length > 0) {
+    // Group by region
+    const regions = {};
+    const regionMap = {
+      'US':'North America','CA':'North America','MX':'North America',
+      'BR':'South America','AR':'South America','CL':'South America','CO':'South America',
+      'GB':'Europe','DE':'Europe','FR':'Europe','NL':'Europe','IE':'Europe','SE':'Europe',
+      'IT':'Europe','ES':'Europe','PL':'Europe','RO':'Europe','CZ':'Europe','AT':'Europe',
+      'CH':'Europe','BE':'Europe','DK':'Europe','FI':'Europe','NO':'Europe','PT':'Europe',
+      'RU':'Russia/CIS','UA':'Russia/CIS','BY':'Russia/CIS','KZ':'Russia/CIS',
+      'CN':'Asia Pacific','JP':'Asia Pacific','KR':'Asia Pacific','IN':'Asia Pacific',
+      'SG':'Asia Pacific','AU':'Asia Pacific','TW':'Asia Pacific','HK':'Asia Pacific',
+      'VN':'Asia Pacific','TH':'Asia Pacific','ID':'Asia Pacific','MY':'Asia Pacific',
+      'ZA':'Africa','NG':'Africa','KE':'Africa','EG':'Africa',
+      'IL':'Middle East','AE':'Middle East','SA':'Middle East','TR':'Middle East',
+    };
+    d.countries.forEach(c => {
+      const region = regionMap[c.code] || 'Other';
+      if (!regions[region]) regions[region] = {count:0, countries:[]};
+      regions[region].count += c.count;
+      regions[region].countries.push(c);
+    });
+
+    const maxR = Math.max(...Object.values(regions).map(r=>r.count));
+    const regionColors = {
+      'North America':'#3b82f6','South America':'#22c55e','Europe':'#a78bfa',
+      'Asia Pacific':'#f5a623','Russia/CIS':'#f05252','Africa':'#06b6d4',
+      'Middle East':'#ec4899','Other':'#6b7280'
+    };
+
+    tm.innerHTML = Object.entries(regions).sort((a,b)=>b[1].count-a[1].count).map(([name,r]) => {
+      const col = regionColors[name]||'#6b7280';
+      const pct = Math.max(10, 100*r.count/maxR);
+      const flags = r.countries.slice(0,4).map(c=>getFlagEmoji(c.code)).join(' ');
+      return '<div style="background:#0f1117;border-radius:10px;padding:12px;border:1px solid '+col+'33;">'+
+        '<div style="font-size:12px;font-weight:600;color:'+col+';margin-bottom:4px;">'+esc(name)+'</div>'+
+        '<div style="font-size:20px;margin-bottom:4px;">'+flags+'</div>'+
+        '<div style="height:6px;background:#1e2030;border-radius:3px;overflow:hidden;margin-bottom:4px;">'+
+        '<div style="width:'+pct+'%;height:100%;background:'+col+'66;border-radius:3px;"></div></div>'+
+        '<div style="font-size:11px;color:#6b7280;">'+r.count+' blocks · '+r.countries.length+' countries</div>'+
+      '</div>';
+    }).join('');
+  } else {
+    tm.innerHTML = '<div style="grid-column:span 3;color:#6b7280;text-align:center;padding:20px;">No threat data yet — browse with DNS pointed at Phalanx, then click "Scan origins"</div>';
+  }
+
+  // Country breakdown
   const cc = document.getElementById('r-geoip-countries');
   if (d.countries && d.countries.length > 0) {
     const maxC = d.countries[0].count;
@@ -1308,7 +1423,7 @@ function renderHealth(d) {
 }
 
 // Fetch health when report opens
-setInterval(function() { if (reportOpen) fetchHealth(); }, 5000);
+setInterval(function() { if (currentView === 'advanced') fetchHealth(); }, 5000);
 
 // ── Honeypot ──
 async function fetchHoneypot() {
@@ -1376,7 +1491,7 @@ function renderHoneypot(d) {
 }
 
 // Auto-refresh honeypot when report panel is open
-setInterval(function() { if (reportOpen) fetchHoneypot(); }, 5000);
+setInterval(function() { if (currentView === 'advanced') fetchHoneypot(); }, 5000);
 </script>
 </body>
 </html>
