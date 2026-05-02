@@ -4,19 +4,19 @@ A Raspberry Pi 4 appliance that blocks ads, trackers, and malicious domains at t
 
 ## How it works
 
-Phalanx runs as a DNS proxy on your local network. Every device that routes DNS through the Pi has its queries checked against a blocklist of 130,000+ known ad, tracker, and malware domains. Blocked queries get an NXDOMAIN response (as if the domain doesn't exist). Legitimate queries are forwarded upstream via plain DNS or DNS-over-HTTPS.
+Phalanx runs as a DNS proxy on your local network. Every device that routes DNS through the Pi has its queries checked against a blocklist of 130,000+ known ad, tracker, and malware domains. Blocked queries get an NXDOMAIN response (as if the domain doesn't exist). Legitimate queries are forwarded upstream via plain UDP DNS (DNS-over-HTTPS is available but off by default to avoid DNS loops when the Pi points at itself).
 
 The dashboard at `http://<pi-ip>` shows real-time stats, live blocked/allowed query feeds, connected devices, and advanced reporting with threat intelligence, network discovery, and system health.
 
 ## Features
 
 - **Ad and tracker blocking** — 130,000+ domains blocked out of the box via StevenBlack and anudeepND blocklists. Subscription tier adds Hagezi Pro and Ultimate for broader coverage.
-- **Real-time dashboard** — Live feeds of blocked and allowed queries, device list, block/allow controls, engine pause/resume toggle.
-- **Advanced reporting** — Top blocked domains, per-device breakdown, query type distribution, hourly activity charts, full query log with latency and matched rules.
-- **Honeypot** — Fake SSH, Telnet, HTTP, and FTP services that trap attackers. Captures credentials, payloads, and port scans. Sessions are classified by severity and logged with full event timelines. High-severity intrusions auto-create alerts.
-- **Threat intelligence** — GeoIP lookup on blocked domains showing country of origin, city, ISP, and block counts with flag emoji summaries.
-- **Network device discovery** — nmap ping sweep or ARP table scan showing every device on the network with IP, MAC, vendor, and hostname.
-- **System health** — CPU, memory, disk, and Pi temperature with progress bars. Live uptime and process memory.
+- **Real-time dashboard** — Two-view interface accessible from the header: **Dashboard** (summary cards, live feeds, block/allow controls, engine toggle, connected devices) and **Advanced** (tabbed panels for deep analysis). Devices appear instantly with reverse DNS hostname resolution.
+- **Advanced reporting** (Reporting tab) — Block rate, average latency, unique domains, active clients. Top blocked domains with bar charts, query type distribution, per-device breakdown, hourly activity chart, and full filterable query log showing domain, type, status, client, latency, and matched rule.
+- **Threat intelligence** (Threats tab) — GeoIP lookup on blocked domains. Visual region-based threat map with color-coded continent cards, flag emojis, and proportional bars. Per-country breakdown with block counts. Detail table showing each blocked domain's IP, country, city, ISP, and block count.
+- **Network device discovery** (Network tab) — nmap ping sweep or ARP table scan showing every device on the network with IP, MAC, vendor, and hostname.
+- **Honeypot** (Honeypot tab) — Fake SSH (port 22), Telnet (port 23), HTTP (port 8888), and FTP (port 21) services that trap attackers. Captures credentials, payloads, and port scans. Sessions are classified by severity with full event timelines. High-severity intrusions auto-create alerts. Dashboard shows sessions, captured credentials, and event log.
+- **System health** (System tab) — CPU, memory, disk, and Pi CPU temperature with progress bars. Live uptime and process memory.
 - **Subscription system** — Cloud backend on Render handles registration, auth, and tier management. Free tier works forever; premium unlocks additional blocklists. Lapsed subscriptions freeze the last cached list — the device never bricks.
 - **DHCP auto-configuration** — Optional dnsmasq setup makes the Pi the DHCP server. All devices automatically use Phalanx for DNS with zero per-device configuration. Fallback DNS (1.1.1.1) included in every lease.
 - **Health watchdog** — Separate service monitors DNS health every 10 seconds. Auto-restarts Phalanx on failure. If unrecoverable, switches DHCP to advertise fallback DNS. Auto-restores when Phalanx recovers.
@@ -129,27 +129,22 @@ nslookup github.com
 
 ### 8. Open the dashboard
 
-Go to `http://<PI_IP>` in your browser. The dashboard shows:
+Go to `http://<PI_IP>` in your browser. The header bar has two views:
 
+**Dashboard view** (default):
 - **Summary cards** — devices online, blocklist size, total queries, total blocked
 - **Block/Allow controls** — type a domain, click Block or Allow, takes effect instantly
 - **Engine toggle** — pause/resume blocking from the header
 - **Live blocked queries** — real-time feed with domain, client IP, and timestamp
 - **Live allowed queries** — same for legitimate traffic
-- **Connected devices** — every device routing DNS through Phalanx
+- **Connected devices** — every device routing DNS through Phalanx, with hostname and online status
 
-Click **Advanced Reporting** to expand:
-
-- **Block rate, avg latency, unique domains, active clients**
-- **Top blocked domains** with proportional bar charts
-- **Query type distribution** (A, AAAA, HTTPS, MX, etc.)
-- **Per-device breakdown** — queries, blocks, and block rate per device
-- **Hourly activity chart** — 24-hour view of traffic and blocking
-- **Full query log** — filterable by All/Blocked/Allowed, shows domain, type, status, client, latency, and matched rule
-- **Threat intelligence** — GeoIP origin of blocked domains with country flags, city, ISP
-- **Network device discovery** — nmap scan showing all devices on the network
-- **System health** — CPU, memory, disk, temperature with progress bars
-- **Honeypot** — sessions, captured credentials, event log, per-service breakdown
+**Advanced view** (click "Advanced" in the header) — five tabs:
+- **Reporting** — block rate, avg latency, top blocked domains, query type distribution, per-device breakdown, hourly activity chart, full query log filterable by All/Blocked/Allowed
+- **Threats** — click "Scan origins" to see a visual region-based threat map with continent cards, flag emojis, country breakdown, and a detail table with domain/country/city/ISP/blocks
+- **Network** — click "Scan network" to discover all devices on the LAN with IP, MAC, vendor, and hostname
+- **Honeypot** — sessions, captured credentials, event log, per-service stats
+- **System** — CPU, memory, disk, temperature progress bars, uptime
 
 ### 9. Test the honeypot
 
