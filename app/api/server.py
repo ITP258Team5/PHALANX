@@ -739,6 +739,7 @@ _FALLBACK_HTML = """<!DOCTYPE html>
   .msg { font-size: 12px; padding: 6px 0; }
   .msg-ok { color: #2dd4a0; }
   .msg-err { color: #f05252; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
   #status-bar { padding: 6px 24px; font-size: 11px; color: #6b7280; background: #161822; border-top: 1px solid #2a2d3a; position: fixed; bottom: 0; width: 100%; }
 </style>
 </head>
@@ -1009,15 +1010,18 @@ async function refresh() {
         return '<div class="device">'+
           '<div style="flex:1;">'+
             '<div class="device-name">'+esc(displayName)+
-              (isIpName ? ' <span style="font-size:10px;color:#4e5470;cursor:pointer;" onclick="renameDevice(\''+esc(d.ip)+'\')">[name it]</span>' : '')+
+              (isIpName ? ' <span style="font-size:10px;color:#4e5470;cursor:pointer;" data-rip="'+esc(d.ip)+'" class="rename-link">[name it]</span>' : '')+
             '</div>'+
             '<div class="device-meta">'+esc(d.ip)+(d.device_type&&d.device_type!=='unknown'?' · '+esc(d.device_type):'')+
-              (!isIpName ? ' <span style="cursor:pointer;color:#4e5470;" onclick="renameDevice(\''+esc(d.ip)+'\')">[rename]</span>' : '')+
+              (!isIpName ? ' <span style="cursor:pointer;color:#4e5470;" data-rip="'+esc(d.ip)+'" class="rename-link">[rename]</span>' : '')+
             '</div>'+
           '</div>'+
           '<div class="dot '+(on?'dot-green':'dot-gray')+'"></div>'+
         '</div>';
       }).join('');
+      document.querySelectorAll('.rename-link').forEach(function(el) {
+        el.addEventListener('click', function() { renameDevice(this.getAttribute('data-rip')); });
+      });
     } else {
       dl.innerHTML='<div style="color:#6b7280;font-size:12px;">No devices seen yet. Point a device DNS to this Pi.</div>';
     }
@@ -1184,7 +1188,7 @@ function renderReport(d) {
       '<div style="color:#4e5470;font-weight:600;padding:4px 0;border-bottom:1px solid #252a38;text-align:right;">Blocked</div>'+
       '<div style="color:#4e5470;font-weight:600;padding:4px 0;border-bottom:1px solid #252a38;text-align:right;">Rate</div>'+
       d.clients.map(c =>
-        '<div style="padding:4px 0;border-bottom:1px solid #1e2030;font-family:\'JetBrains Mono\',monospace;">'+esc(c.ip)+'</div>'+
+        '<div style="padding:4px 0;border-bottom:1px solid #1e2030;">'+esc(c.ip)+'</div>'+
         '<div style="padding:4px 0;border-bottom:1px solid #1e2030;text-align:right;color:#9ca3af;">'+c.total_queries+'</div>'+
         '<div style="padding:4px 0;border-bottom:1px solid #1e2030;text-align:right;color:#f05252;">'+c.blocked_queries+'</div>'+
         '<div style="padding:4px 0;border-bottom:1px solid #1e2030;text-align:right;color:'+(c.block_rate>50?'#f05252':'#6b7280')+';">'+c.block_rate+'%</div>'
@@ -1333,7 +1337,7 @@ function renderGeoIP(d) {
       '<div style="display:grid;grid-template-columns:1fr 80px 80px 100px 50px;gap:0;font-size:10px;color:#4e5470;font-weight:600;padding-bottom:4px;border-bottom:1px solid #252a38;margin-bottom:4px;">'+
       '<div>DOMAIN</div><div>COUNTRY</div><div>CITY</div><div>ISP</div><div style="text-align:right">BLOCKS</div></div>'+
       d.threats.map(t =>
-        '<div style="display:grid;grid-template-columns:1fr 80px 80px 100px 50px;gap:0;padding:3px 0;border-bottom:1px solid #1e2030;font-family:\'JetBrains Mono\',monospace;font-size:11px;">'+
+        '<div style="display:grid;grid-template-columns:1fr 80px 80px 100px 50px;gap:0;padding:3px 0;border-bottom:1px solid #1e2030;font-size:11px;">'+
         '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f05252;">'+esc(t.domain)+'</div>'+
         '<div style="color:#9ca3af;">'+getFlagEmoji(t.countryCode)+' '+esc(t.countryCode)+'</div>'+
         '<div style="color:#6b7280;">'+esc(t.city||'—')+'</div>'+
@@ -1372,7 +1376,7 @@ function renderNetScan(d) {
     '<div style="display:grid;grid-template-columns:120px 140px 120px 1fr;gap:0;font-size:10px;color:#4e5470;font-weight:600;padding-bottom:4px;border-bottom:1px solid #252a38;margin-bottom:4px;">'+
     '<div>IP</div><div>MAC</div><div>VENDOR</div><div>HOSTNAME</div></div>'+
     d.devices.map(dev =>
-      '<div style="display:grid;grid-template-columns:120px 140px 120px 1fr;gap:0;padding:3px 0;border-bottom:1px solid #1e2030;font-family:\'JetBrains Mono\',monospace;font-size:11px;">'+
+      '<div style="display:grid;grid-template-columns:120px 140px 120px 1fr;gap:0;padding:3px 0;border-bottom:1px solid #1e2030;font-size:11px;">'+
       '<div style="color:#22c55e;">'+esc(dev.ip)+'</div>'+
       '<div style="color:#6b7280;">'+esc(dev.mac||'—')+'</div>'+
       '<div style="color:#9ca3af;">'+esc(dev.vendor||'—')+'</div>'+
@@ -1447,7 +1451,7 @@ function renderHoneypot(d) {
       const sevC = s.severity==='critical'?'#f05252':s.severity==='high'?'#f5a623':s.severity==='medium'?'#3b82f6':'#6b7280';
       return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #1e2030;">'+
         '<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;background:'+sevC+'22;color:'+sevC+';">'+esc(s.severity)+'</span>'+
-        '<span style="color:#9ca3af;font-family:\'JetBrains Mono\',monospace;">'+esc(s.attacker_ip)+'</span>'+
+        '<span style="color:#9ca3af;">'+esc(s.attacker_ip)+'</span>'+
         '<span style="color:#6b7280;">→ :'+s.decoy_port+'</span>'+
         '<span style="color:#6b7280;">'+esc(s.service_emulated||'')+'</span>'+
         '<span style="color:#4e5470;margin-left:auto;">'+esc(s.attack_class||'')+'</span>'+
